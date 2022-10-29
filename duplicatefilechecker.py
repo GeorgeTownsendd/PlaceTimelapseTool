@@ -1,4 +1,11 @@
 """
+Code saved from a comment on the below stackoverflow link for use in Place activity detector.
+
+Minor modifications by GeorgeT (code and comments are not my own)
+
+^^^^^^^^^^^^^^
+______________
+
 Fast duplicate file finder.
 Usage: duplicates.py <folder> [<folder>...]
 Based on https://stackoverflow.com/a/36113168/300783
