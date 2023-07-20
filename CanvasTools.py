@@ -127,6 +127,7 @@ class FrozenCanvas:
         self.event_name = self.event.event_name
         self.grid_size = grid_size
         self.canvas_size = self.grid_size * 1000
+        self.start_time = start_time
 
         canvas_image = np.zeros((self.canvas_size, self.canvas_size, 3))
         for subcanvas in self.event.subcanvases:
@@ -226,18 +227,34 @@ class ReferenceSection(Section):
 
         fig, axs = plt.subplots(1, 3, figsize=(15, 5))
 
-        axs[0].imshow(self.reference_image)
-        axs[0].set_title("Reference Image")
+        # Show Reference Image
+        axs[0].imshow(self.reference_image, origin='upper')
+        axs[0].set_title("Reference Image", fontsize=20)
+        self.set_labels(axs[0])
 
+        # Show Frozen Canvas Image
         x, y = self.top_left
         comparison_image = frozen_canvas.canvas_image[y:y+self.height, x:x+self.width]
-        axs[1].imshow(comparison_image)
-        axs[1].set_title("Frozen Canvas Image")
+        axs[1].imshow(comparison_image, origin='upper')
+        axs[1].set_title(str(frozen_canvas.start_time), fontsize=20)
+        self.set_labels(axs[1])
 
-        axs[2].imshow(difference, cmap='gray')
-        axs[2].set_title("Binary Change Map")
+        # Show Binary Change Map
+        axs[2].imshow(difference, cmap='gray', origin='upper')
+        axs[2].set_title("Wrong Pixels", fontsize=20)
+        self.set_labels(axs[2])
 
+        plt.tight_layout()
         plt.show()
+
+    def set_labels(self, ax):
+        x_ticks = np.arange(0, self.width, 5)
+        y_ticks = np.arange(0, self.height, 5)
+        ax.set_xticks(x_ticks)
+        ax.set_yticks(y_ticks)
+        ax.set_xticklabels(x_ticks + self.top_left[0])
+        ax.set_yticklabels(y_ticks + self.top_left[1])
+
     @staticmethod
     def load_image(img_path):
         img = Image.open(img_path)
