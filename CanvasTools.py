@@ -262,12 +262,40 @@ class ReferenceSection(Section):
         return img
 
 
+def compare_event_to_reference(event, reference_section, window_size_seconds=15):
+    """
+    Compare a given reference section to an entire event quantised into timesteps of equal length.
+
+    Parameters:
+    event: The Event object to be compared.
+    reference_section: The ReferenceSection object to compare the event against.
+    window_size_seconds: The size of the timestep in seconds (default is 15).
+    """
+    timestep = timedelta(seconds=window_size_seconds)
+    current_time = event.data_start
+
+    while current_time <= event.data_end:
+        frozen_canvas = FrozenCanvas(event, current_time, window_size_seconds)
+        #difference = reference_section.compare_with_frozen_canvas(frozen_canvas)
+
+        # Display the comparison (optional)
+        reference_section.display_comparison(frozen_canvas)
+
+        # Do something with the difference
+        # ...
+
+        # Move to next timestep
+        current_time += timestep
+        print(current_time)
+
 if __name__ == '__main__':
     reference_section = ReferenceSection('place_2022', 'HI_test')
 
     event = Event('place_2022')
-    frozen_canvas = FrozenCanvas(event, datetime(2022, 4, 2, 23, 18, 46), window_size_seconds=15)
+    compare_event_to_reference(event, reference_section)
 
-    x = reference_section.display_comparison(frozen_canvas)
+    #frozen_canvas = FrozenCanvas(event, datetime(2022, 4, 2, 23, 18, 46), window_size_seconds=15)
+
+    #x = reference_section.display_comparison(frozen_canvas)
 
     #frozen_canvas.display()
