@@ -7,7 +7,7 @@ from datetime import datetime
 
 
 def get_tile_urls():
-    return [['http://exampleimage.com', (0, 0)]]
+    return [['http://exampleimage.com', '00']]
 
 
 # Set up logging
@@ -34,7 +34,7 @@ async def fetch_all_tiles(fetch_interval, event_name):
         while True:
             tasks = []
             for url, coordinates in get_tile_urls():
-                subcanvas_dir = os.path.join(base_dir, f'subcanvas_{coordinates[0]}_{coordinates[1]}')
+                subcanvas_dir = os.path.join(base_dir, f'subcanvas_{coordinates[0]}{coordinates[1]}')
                 os.makedirs(subcanvas_dir, exist_ok=True)
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 img_path = os.path.join(subcanvas_dir, f'image_{timestamp}.png')
