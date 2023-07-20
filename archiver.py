@@ -34,10 +34,10 @@ async def fetch_all_tiles(fetch_interval, event_name):
         while True:
             tasks = []
             for url, coordinates in get_tile_urls():
-                quadrant_dir = os.path.join(base_dir, f'quadrant_{coordinates[0]}_{coordinates[1]}')
-                os.makedirs(quadrant_dir, exist_ok=True)
+                subcanvas_dir = os.path.join(base_dir, f'subcanvas_{coordinates[0]}_{coordinates[1]}')
+                os.makedirs(subcanvas_dir, exist_ok=True)
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                img_path = os.path.join(quadrant_dir, f'image_{timestamp}.png')
+                img_path = os.path.join(subcanvas_dir, f'image_{timestamp}.png')
                 task = fetch_tile(session, url, img_path, fetch_interval)
                 tasks.append(task)
             await asyncio.gather(*tasks)
