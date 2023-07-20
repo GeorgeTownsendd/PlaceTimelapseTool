@@ -4,7 +4,7 @@ import glob
 import time
 import matplotlib.pyplot as plt
 import numpy as np
-
+import json
 from datetime import datetime
 import warnings
 
@@ -35,6 +35,30 @@ class Canvas:
     def get_diff(self, other_canvas):
         pass
         # Your logic to get diffs
+
+    def create_reference_section(self, ref_name, top_left, width, height):
+        # Create a section with given parameters
+        section = Section(self, top_left, width, height)
+
+        # Create directory to save the reference image if it doesn't exist
+        reference_dir = os.path.join(self.base_dir, 'reference_sections')
+        os.makedirs(reference_dir, exist_ok=True)
+
+        # Create a PIL Image object from the section's image data
+        reference_image = Image.fromarray(section.image_data)
+
+        # Save the reference image
+        reference_image_path = os.path.join(reference_dir, f'{ref_name}.png')
+        reference_image.save(reference_image_path)
+
+        # Save metadata in a separate JSON file
+        metadata = {
+            'top_left': top_left,
+            'width': width,
+            'height': height
+        }
+        with open(os.path.join(reference_dir, f'{ref_name}_metadata.json'), 'w') as json_file:
+            json.dump(metadata, json_file, indent=4)
 
 
 class SubCanvas:
@@ -134,7 +158,7 @@ class Section:
 
     from matplotlib.ticker import MaxNLocator
 
-    def create_plot(self):
+    def create_section_plot(self):
         fig, ax = plt.subplots()
         ax.imshow(self.image_data)
 
@@ -154,18 +178,57 @@ class Section:
 
         return ax
 
-    def display(self):
-        ax = self.create_plot()
+    def display_section_plot(self):
+        ax = self.create_section_plot()
+        plt.tight_layout()
         plt.show()
 
 
 class ReferenceSection(Section):
-    def __init__(self, canvas, top_left, width, height, reference_section_name):
+    def __init__(self, canvas, filename):
+        # Load metadata from JSON file
+        metadata_file = os.path.join('canvas_data', canvas.event_name, 'reference_sections',
+                                     f'{filename}_metadata.json')
+        with open(metadata_file, 'r') as json_file:
+            metadata = json.load(json_file)
+
+        # Extract parameters from metadata
+        top_left = tuple(metadata['top_left'])
+        width = metadata['width']
+        height = metadata['height']
+
         super().__init__(canvas, top_left, width, height)
-        self.reference_section_name = reference_section_name
-        self.reference_image_path = os.path.join('canvas_data', canvas.event_name, 'reference_sections', f'{self.reference_section_name}.png')
+        self.reference_section_name = filename
+        self.reference_image_path = os.path.join('canvas_data', canvas.event_name, 'reference_sections',
+                                                 f'{self.reference_section_name}.png')
         self.reference_image_data = self.load_image(self.reference_image_path)
 
     def load_image(self, img_path):
         img = Image.open(img_path)
         return img.convert("RGB")
+
+    def create_three_part_plot(self):
+        # Create a 1x3 subplot
+        fig, axs = plt.subplots(1, 3, figsize=(15, 5))
+
+        # Display the reference image
+        axs[0].imshow(self.reference_image_data)
+        axs[0].set_title("Reference Image")
+
+        # Display the current image
+        axs[1].imshow(self.image_data)
+
+        timestamp = self.canvas.subcanvases['00'].image_path[:-4]
+
+        axs[1].set_title(timestamp[timestamp.rfind('/')+1:timestamp.rfind('.')])
+
+        # Calculate and display the difference
+        diff = np.abs(np.array(self.image_data, dtype=int) - np.array(self.reference_image_data, dtype=int))
+        axs[2].imshow(np.any(diff > 0, axis=2), cmap='gray')
+        axs[2].set_title("Incorrect Pixels")
+
+        # Remove the axis labels for cleaner visualization
+        for ax in axs:
+            ax.axis('off')
+
+        return fig, axs
