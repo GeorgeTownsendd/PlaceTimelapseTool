@@ -10,12 +10,14 @@ from PlaceMapTools import *
 #reference_section = ReferenceSection(canvas, 'HI_test')
 #reference_section.display_section_plot()
 
-canvas = Canvas('place_2022', datetime(2022, 4, 3, 1))
+from datetime import datetime
+
+canvas = Canvas('place_2022', datetime(2022, 4, 2, 23))
 reference_section = ReferenceSection(canvas, 'HI_test')
 
-fig, axs = reference_section.create_three_part_plot()
-plt.show()
-
+start_time = datetime(2022, 4, 2, 23, 0, 0)
+end_time = datetime(2022, 4, 2, 23, 20, 0)
+reference_section.create_timelapse(start_time, end_time)
 
 
 #example_section = Section(canvas, (48, 777), 42, 54)

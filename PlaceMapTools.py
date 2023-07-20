@@ -7,6 +7,7 @@ import numpy as np
 import json
 from datetime import datetime
 import warnings
+from dateutil.parser import parse
 
 class Canvas:
     def __init__(self, event_name, datetime_arg=None):
@@ -207,28 +208,67 @@ class ReferenceSection(Section):
         img = Image.open(img_path)
         return img.convert("RGB")
 
-    def create_three_part_plot(self):
+    def create_three_part_plot(self, comparison_image_file):
+        image_data = self.load_image(comparison_image_file)
+        readable_timestamp = comparison_image_file[:-4]
+        image_timestamp = readable_timestamp[readable_timestamp.rfind('/') + 1:readable_timestamp.rfind('.')]
+
         # Create a 1x3 subplot
         fig, axs = plt.subplots(1, 3, figsize=(15, 5))
 
+        # Convert PIL Images to NumPy arrays
+        current_image_data = np.array(image_data)
+        reference_image_data = np.array(self.reference_image_data)
+
         # Display the reference image
-        axs[0].imshow(self.reference_image_data)
+        axs[0].imshow(reference_image_data)
         axs[0].set_title("Reference Image")
 
-        # Display the current image
-        axs[1].imshow(self.image_data)
+        # Get coordinates of top left corner of the reference section
+        top_left_x = self.top_left[0]
+        top_left_y = self.top_left[1]
 
-        timestamp = self.canvas.subcanvases['00'].image_path[:-4]
+        # Display the current section of the image
+        section_image_data = current_image_data[top_left_y:top_left_y+self.height,
+                                                top_left_x:top_left_x+self.width]
 
-        axs[1].set_title(timestamp[timestamp.rfind('/')+1:timestamp.rfind('.')])
+        axs[1].imshow(section_image_data)
+        axs[1].set_title(image_timestamp)
 
         # Calculate and display the difference
-        diff = np.abs(np.array(self.image_data, dtype=int) - np.array(self.reference_image_data, dtype=int))
+        diff = np.abs(section_image_data.astype(int) - reference_image_data.astype(int))
         axs[2].imshow(np.any(diff > 0, axis=2), cmap='gray')
-        axs[2].set_title("Incorrect Pixels")
+        axs[2].set_title("Difference Image")
 
         # Remove the axis labels for cleaner visualization
         for ax in axs:
             ax.axis('off')
 
         return fig, axs
+
+    def create_timelapse(self, start_time=None, end_time=None):
+        # Create directory for frames if it doesn't exist
+        frames_dir = os.path.join('canvas_data', self.canvas.event_name, 'frames')
+        os.makedirs(frames_dir, exist_ok=True)
+
+        # Get list of all image files in directory and sort by timestamp
+        image_files = sorted(glob.glob(os.path.join(self.canvas.base_dir, 'subcanvas_*', '*.png')),
+                             key=lambda x: parse(x.split('/')[-1].split('.png')[0]))
+
+        for image_n, img_file in enumerate(image_files):
+            timestamp_str = img_file.split('/')[-1].split('.png')[0]
+            timestamp = parse(timestamp_str)
+
+            if start_time is not None and timestamp < start_time:
+                continue
+            if end_time is not None and timestamp > end_time:
+                continue
+
+            fig, axs = self.create_three_part_plot(img_file)
+            #fig.suptitle('')
+
+            # Save the figure
+            fig.savefig(os.path.join(frames_dir, f'frame{image_n+1}.png'))
+
+            # Close the plot
+            plt.close(fig)
