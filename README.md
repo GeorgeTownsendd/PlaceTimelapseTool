@@ -2,7 +2,7 @@ A simple archival/visualization tool written for the second Reddit /r/place even
 
 # Archive Tool (2023)
 
-![](https://github.com/GeorgeTownsendd/PlaceTimelapseTool/blob/master/examples/archive_structure.png)
+![](https://github.com/GeorgeTownsendd/PlaceTimelapseTool/blob/testing/examples/archive_structure.png)
 
 (inspired by https://github.com/ProstoSanja/place-2022/tree/master - see linked readme for instructions on creating authparams.py)
 
