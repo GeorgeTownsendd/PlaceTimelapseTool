@@ -1,301 +1,135 @@
-import numpy as np
-import matplotlib.pyplot as plt
 import os
-import re
-from datetime import datetime, timedelta
-from PIL import Image
+import requests
+import time
 import json
-import bisect
+from requests.auth import HTTPBasicAuth
+import websocket
+from PIL import Image
+from datetime import datetime
+from authparams import USERNAME, PASSWORD, OAUTH_CLIENT, OAUTH_SECRET
+from typing import Dict, Optional
+import re
 
+class Archiver:
+    def __init__(self):
+        self.auth_token = None
+        self.current_config: Dict[int, Dict] = {}
+        self.base_dir = "canvas_data/place_2023/subcanvas_00/"
+        os.makedirs(self.base_dir, exist_ok=True)
+        self.fetched_files = {}
 
-def find_closest_datetime_index(sorted_list, input_datetime):
-    index = bisect.bisect_left(sorted_list, input_datetime)
-    if index == 0:
-        return index
-    if index == len(sorted_list):
-        return index - 1
-    before = sorted_list[index - 1]
-    after = sorted_list[index]
-    if after - input_datetime < input_datetime - before:
-        return index
-    else:
-        return index - 1
-
-
-class SubCanvas:
-    def __init__(self, base_dir):
-        self.base_dir = base_dir
-
-        split_directory = self.base_dir.split('/')
-        self.event_name = split_directory[-2]
-        self.subcanvas_gridloc = split_directory[-1][-2:]
-
-        self.image_list = os.listdir(self.base_dir)
-        self.image_timestamps = [datetime.strptime(os.path.splitext(os.path.basename(file))[0], '%Y-%m-%d %H:%M:%S.%f') for file in self.image_list]
-
-        self.sorted_image_list = [x for y, x in sorted(zip(self.image_timestamps, self.image_list))]
-        self.sorted_image_timestamps = sorted(self.image_timestamps)
-
-        self.in_memory = False
-        self.loaded_image = np.zeros((1000, 1000, 3))
-
-    def load_to_memory(self, timestamp='latest', window_seconds=0):
-        if len(self.sorted_image_list) == 0: #subcanvas may not have any data/exist
-            self.loaded_image_filename = 'NoFile'
-            return np.zeros((1000, 1000, 3))
-
-        else:
-            if timestamp == 'latest':
-                self.loaded_image_filename = self.sorted_image_list[-1]
-                self.loaded_image = self.load_image(self.loaded_image_filename)
-
-            elif window_seconds != 0:
-                closet_image_timestamp_index = find_closest_datetime_index(self.sorted_image_timestamps, timestamp)
-
-                if window_seconds > 0:
-                    if (self.sorted_image_timestamps[
-                            closet_image_timestamp_index] - timestamp).seconds < window_seconds:
-                        self.loaded_image_filename = self.sorted_image_list[closet_image_timestamp_index]
-                        self.loaded_image = self.load_image(self.loaded_image_filename)
-                    else:
-                        print('No SubCanvas images within threshold')
-
+    def auth(self):
+        try:
+            r = requests.post(f'https://www.reddit.com/api/v1/access_token?grant_type=password&username={USERNAME}&password={PASSWORD}',
+                            auth=HTTPBasicAuth(OAUTH_CLIENT, OAUTH_SECRET))
+            auth_response = json.loads(r.text)
+            if 'access_token' in auth_response:
+                return auth_response['access_token']
             else:
-                closet_image_timestamp_index = find_closest_datetime_index(self.sorted_image_timestamps, timestamp)
-                self.loaded_image = self.loaded_image(closet_image_timestamp_index)
+                print("Access token not found in the auth response")
+                return None
+        except Exception as e:
+            print(f"Error during auth: {e}")
+            return None
 
-    def get_image_nearest_timestamp(self, timestamp, window_seconds=0):
-        closet_image_timestamp_index = find_closest_datetime_index(self.sorted_image_timestamps, timestamp)
+    def get_auth_token(self):
+        while True:
+            self.auth_token = self.auth()
+            if self.auth_token is not None:
+                break
+            time.sleep(5)
 
-        return self.load_image(self.sorted_image_list[closet_image_timestamp_index])
+    def on_message(self, ws, message):
+        payload = json.loads(message)
+        print(f"Received payload: {payload}")  # Debug statement
+        if payload['type'] == "connection_error":
+            ws.close()
+            return
 
+        if payload['type'] != "data":
+            return
 
-    def load_image(self, img_path):
-        img = Image.open(os.path.join(self.base_dir, img_path))
-        img = img.convert("RGB")
-        img_array = np.array(img)
-        img_array = img_array / 255.0  # Normalize to [0,1]
-        return img_array
+        if payload['payload']['data']['subscribe']['data']['__typename'] == "ConfigurationMessageData":
+            messageIndex = 2
+            canvasConfig = payload['payload']['data']['subscribe']['data']['canvasConfigurations']
+            canvasHeight = payload['payload']['data']['subscribe']['data']['canvasHeight']
+            canvasWidth = payload['payload']['data']['subscribe']['data']['canvasWidth']
+            activeZoneRaw = payload['payload']['data']['subscribe']['data']['activeZone']
+            activeZone = {
+                "startX": activeZoneRaw['topLeft']['x'],
+                "startY": activeZoneRaw['topLeft']['y'],
+                "endX": activeZoneRaw['bottomRight']['x'],
+                "endY": activeZoneRaw['bottomRight']['y']
+            }
+            for configItem in canvasConfig:
+                if configItem['__typename'] == "CanvasConfiguration":
+                    itemIndex = configItem['index']
+                    self.current_config[itemIndex] = {
+                        "url": None,
+                        "completed": False,
+                        "startX": configItem['dx'],
+                        "startY": configItem['dy'],
+                        "endX": configItem['dx'] + canvasWidth,
+                        "endY": configItem['dy'] + canvasHeight
+                    }
+                    if (self.current_config[itemIndex]["endX"] <= activeZone["startX"] or
+                            self.current_config[itemIndex]["startX"] >= activeZone["endX"]):
+                        self.current_config[itemIndex]['completed'] = True
+                    if (self.current_config[itemIndex]["endY"] <= activeZone["startY"] or
+                            self.current_config[itemIndex]["startY"] >= activeZone["endY"]):
+                        self.current_config[itemIndex]['completed'] = True
+            for index in self.current_config.keys():
+                if (not self.current_config[index]['completed']):
+                    ws.send('{"id":"' + str(
+                        messageIndex) + '","type":"start","payload":{"variables":{"input":{"channel":{"teamOwner":"GARLICBREAD","category":"CANVAS","tag":"' + str(
+                        index) + '"}}},"extensions":{},"operationName":"replace","query":"subscription replace($input:SubscribeInput!){subscribe(input:$input){id...on BasicMessage{data{__typename...on FullFrameMessageData{__typename name timestamp}...on DiffFrameMessageData{__typename name currentTimestamp previousTimestamp}}__typename}__typename}}"}}')
+                    messageIndex += 1
 
+        if payload['payload']['data']['subscribe']['data']['__typename'] == "FullFrameMessageData":
+            url = payload['payload']['data']['subscribe']['data']['name']
+            extractedIndex = int(re.search("[0-9]{13}-([0-9]{1})", url).group(1))
+            self.current_config[extractedIndex]['url'] = url
+            self.fetch_image_from_url(url, extractedIndex)
+            if all([config['completed'] for config in self.current_config.values()]):
+                ws.close()
 
-    def generate_subcanvas_plot(self):
-        if self.in_memory:
-            fig, ax = plt.subplots(figsize=(10, 10))
-            ax.imshow(self.loaded_image)
-            ax.set_title(f'SubCanvas from {self.event_name} at grid location {self.subcanvas_gridloc}')
-            return fig, ax
-        else:
-            print('No image has been loaded into memory.')
-            return None, None
+    def on_open(self, ws):
+        print("Connection opened")
+        ws.send('{"type":"connection_init","payload":{"Authorization":"Bearer ' + self.auth_token + '"}}')
+        ws.send('{"id":"1","type":"start","payload":{"variables":{"input":{"channel":{"teamOwner":"GARLICBREAD","category":"CONFIG"}}},"extensions":{},"operationName":"configuration","query":"subscription configuration($input:SubscribeInput!){subscribe(input:$input){id...on BasicMessage{data{__typename...on ConfigurationMessageData{colorPalette{colors{hex index __typename}__typename}canvasConfigurations{index dx dy __typename}activeZone{topLeft{x y __typename}bottomRight{ x y __typename} __typename}canvasWidth canvasHeight __typename}}__typename}__typename}}"}}')
 
-    def display(self):
-        self.generate_subcanvas_plot()
-        plt.show()
+    def fetch_image_from_url(self, url, index):
+        response = requests.get(url)
+        filename = os.path.join(self.base_dir, f"{index}-{int(time.time())}.png")
+        with open(filename, 'wb') as file:
+            file.write(response.content)
+        self.current_config[index]['completed'] = True
+        self.fetched_files[index] = filename  # Save the filename
 
+    def combine_and_save(self):
+        final_image = Image.new('RGB', (2000, 2000))
+        for idx, config in sorted(self.current_config.items()):
+            if config['completed'] and idx in self.fetched_files:
+                img = Image.open(self.fetched_files[idx])  # Retrieve the filename
+                final_image.paste(img, (config['startX'], config['startY']))
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
+        final_image.save(os.path.join(self.base_dir, f"{timestamp}.png"))
 
-class Event:
-    def __init__(self, event_name):
-        self.event_name = event_name
-        self.base_dir = os.path.join('canvas_data', self.event_name)
+    def run(self):
+        self.get_auth_token()
+        while True:
+            try:
+                ws = websocket.WebSocketApp("wss://gql-realtime-2.reddit.com/query",
+                                            on_message=self.on_message,
+                                            on_open=self.on_open)
+                ws.run_forever()
+            except Exception as ex:
+                self.get_auth_token()
+                print("ERROR")
+                print(str(ex))
+            self.combine_and_save()
+            time.sleep(30)
 
-        if os.path.exists(self.base_dir):
-            self.initalised = True
-        else:
-            self.initalised = False
-
-        if self.initalised:
-            pattern = re.compile('subcanvas_[0-9][0-9]')
-            subcanvases_names = [folder_name[-2:] for folder_name in os.listdir(self.base_dir) if pattern.match(folder_name)]
-            self.subcanvases = [SubCanvas(os.path.join(self.base_dir, f'subcanvas_{sc[0]}{sc[1]}')) for sc in subcanvases_names]
-
-            self.event_image_list = []
-            self.event_image_timestamp_list = []
-            for subcanvas in self.subcanvases:
-                self.event_image_list += subcanvas.image_list
-                self.event_image_timestamp_list += subcanvas.image_timestamps
-
-            self.sorted_event_image_list = [x for y, x in sorted(zip(self.event_image_timestamp_list, self.event_image_list))]
-            self.sorted_event_image_timestamp_list = sorted(self.event_image_timestamp_list)
-
-            self.data_start = self.sorted_event_image_timestamp_list[0]
-            self.data_end = self.sorted_event_image_timestamp_list[1]
-
-
-class FrozenCanvas:
-    def __init__(self, event, start_time, window_size_seconds, grid_size=1):
-        self.event = event
-        self.event_name = self.event.event_name
-        self.grid_size = grid_size
-        self.canvas_size = self.grid_size * 1000
-        self.start_time = start_time
-
-        canvas_image = np.zeros((self.canvas_size, self.canvas_size, 3))
-        for subcanvas in self.event.subcanvases:
-            if not subcanvas.in_memory:
-                subcanvas.load_to_memory(timestamp=start_time, window_seconds=window_size_seconds)
-
-            subcanvas_id = subcanvas.subcanvas_gridloc
-            subcanvas_image = subcanvas.loaded_image
-
-            x_start = (int(subcanvas_id[0]) % self.grid_size) * 1000
-            y_start = (int(subcanvas_id[1]) % self.grid_size) * 1000
-
-            canvas_image[y_start:y_start+1000, x_start:x_start+1000] = subcanvas_image
-
-        self.canvas_image = canvas_image
-
-    def generate_frozen_canvas_plot(self):
-        fig, ax = plt.subplots(figsize=(10, 10))
-        ax.imshow(self.canvas_image, origin='upper')
-        ax.set_title(f'FrozenCanvas from {self.event_name}')
-        return fig, ax
-
-    def display(self):
-        self.generate_frozen_canvas_plot()
-        plt.show()
-
-    def create_and_save_reference_section(self, ref_name, top_left, width, height):
-        x, y = top_left
-        reference_image = self.canvas_image[y:y+height, x:x+width]
-
-        reference_dir = os.path.join('canvas_data', self.event_name, 'reference_sections')
-        os.makedirs(reference_dir, exist_ok=True)
-
-        reference_image = Image.fromarray((reference_image * 255).astype(np.uint8))
-        reference_image_path = os.path.join(reference_dir, f'{ref_name}.png')
-        reference_image.save(reference_image_path)
-
-        metadata = {
-            'top_left': top_left,
-            'width': width,
-            'height': height
-        }
-        with open(os.path.join(reference_dir, f'{ref_name}_metadata.json'), 'w') as json_file:
-            json.dump(metadata, json_file, indent=4)
-
-
-class Section:
-    def __init__(self, top_left, width, height):
-        self.top_left = top_left
-        self.width = width
-        self.height = height
-
-
-class ReferenceSection(Section):
-    def __init__(self, event_name, ref_name):
-        self.event_name = event_name
-        self.load_reference(ref_name)
-
-    def save_reference(self, ref_name):
-        reference_dir = os.path.join('canvas_data', self.event_name, 'reference_sections')
-        os.makedirs(reference_dir, exist_ok=True)
-
-        reference_image = Image.fromarray((self.reference_image * 255).astype(np.uint8))
-        reference_image_path = os.path.join(reference_dir, f'{ref_name}.png')
-        reference_image.save(reference_image_path)
-
-        metadata = {
-            'top_left': self.top_left,
-            'width': self.width,
-            'height': self.height
-        }
-        with open(os.path.join(reference_dir, f'{ref_name}_metadata.json'), 'w') as json_file:
-            json.dump(metadata, json_file, indent=4)
-
-    def load_reference(self, ref_name):
-        reference_dir = os.path.join('canvas_data', self.event_name, 'reference_sections')
-        metadata_file = os.path.join(reference_dir, f'{ref_name}_metadata.json')
-        with open(metadata_file, 'r') as json_file:
-            metadata = json.load(json_file)
-
-        self.top_left = tuple(metadata['top_left'])
-        self.width = metadata['width']
-        self.height = metadata['height']
-
-        reference_image_path = os.path.join(reference_dir, f'{ref_name}.png')
-        self.reference_image = self.load_image(reference_image_path)
-
-    def compare_with_frozen_canvas(self, frozen_canvas):
-        x, y = self.top_left
-        comparison_image = frozen_canvas.canvas_image[y:y+self.height, x:x+self.width]
-
-        difference = np.where(np.all(self.reference_image == comparison_image, axis=-1), 0, 1)
-        return difference
-
-    def display_comparison(self, frozen_canvas):
-        difference = self.compare_with_frozen_canvas(frozen_canvas)
-
-        fig, axs = plt.subplots(1, 3, figsize=(15, 5))
-
-        # Show Reference Image
-        axs[0].imshow(self.reference_image, origin='upper')
-        axs[0].set_title("Reference Image", fontsize=20)
-        self.set_labels(axs[0])
-
-        # Show Frozen Canvas Image
-        x, y = self.top_left
-        comparison_image = frozen_canvas.canvas_image[y:y+self.height, x:x+self.width]
-        axs[1].imshow(comparison_image, origin='upper')
-        axs[1].set_title(str(frozen_canvas.start_time), fontsize=20)
-        self.set_labels(axs[1])
-
-        # Show Binary Change Map
-        axs[2].imshow(difference, cmap='gray', origin='upper')
-        axs[2].set_title("Wrong Pixels", fontsize=20)
-        self.set_labels(axs[2])
-
-        plt.tight_layout()
-        plt.show()
-
-    def set_labels(self, ax):
-        x_ticks = np.arange(0, self.width, 5)
-        y_ticks = np.arange(0, self.height, 5)
-        ax.set_xticks(x_ticks)
-        ax.set_yticks(y_ticks)
-        ax.set_xticklabels(x_ticks + self.top_left[0])
-        ax.set_yticklabels(y_ticks + self.top_left[1])
-
-    @staticmethod
-    def load_image(img_path):
-        img = Image.open(img_path)
-        img = np.array(img) / 255.0
-        return img
-
-
-def compare_event_to_reference(event, reference_section, window_size_seconds=15):
-    """
-    Compare a given reference section to an entire event quantised into timesteps of equal length.
-
-    Parameters:
-    event: The Event object to be compared.
-    reference_section: The ReferenceSection object to compare the event against.
-    window_size_seconds: The size of the timestep in seconds (default is 15).
-    """
-    timestep = timedelta(seconds=window_size_seconds)
-    current_time = event.data_start
-
-    while current_time <= event.data_end:
-        frozen_canvas = FrozenCanvas(event, current_time, window_size_seconds)
-        #difference = reference_section.compare_with_frozen_canvas(frozen_canvas)
-
-        # Display the comparison (optional)
-        reference_section.display_comparison(frozen_canvas)
-
-        # Do something with the difference
-        # ...
-
-        # Move to next timestep
-        current_time += timestep
-        print(current_time)
-
-if __name__ == '__main__':
-    reference_section = ReferenceSection('place_2022', 'HI_test')
-
-    event = Event('place_2022')
-    compare_event_to_reference(event, reference_section)
-
-    #frozen_canvas = FrozenCanvas(event, datetime(2022, 4, 2, 23, 18, 46), window_size_seconds=15)
-
-    #x = reference_section.display_comparison(frozen_canvas)
-
-    #frozen_canvas.display()
+if __name__ == "__main__":
+    archiver = Archiver()
+    archiver.run()
