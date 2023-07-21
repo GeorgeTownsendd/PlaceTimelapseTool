@@ -14,9 +14,10 @@ class Archiver:
     def __init__(self):
         self.auth_token = None
         self.current_config: Dict[int, Dict] = {}
-        self.base_dir = "canvas_data/place_2023/subcanvas_00/"
+        self.base_dir = "canvas_data/place_2023/canvas/"
         os.makedirs(self.base_dir, exist_ok=True)
         self.fetched_files = {}
+        self.timestamp = None
 
     def auth(self):
         try:
@@ -93,27 +94,56 @@ class Archiver:
             if all([config['completed'] for config in self.current_config.values()]):
                 ws.close()
 
+
+    def get_directory_name(self):
+        self.timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
+        directory_name = os.path.join(self.base_dir, self.timestamp)
+        os.makedirs(directory_name, exist_ok=True)
+        return directory_name
+
     def on_open(self, ws):
         print("Connection opened")
+        self.directory_name = self.get_directory_name()  # Create the directory here
         ws.send('{"type":"connection_init","payload":{"Authorization":"Bearer ' + self.auth_token + '"}}')
         ws.send('{"id":"1","type":"start","payload":{"variables":{"input":{"channel":{"teamOwner":"GARLICBREAD","category":"CONFIG"}}},"extensions":{},"operationName":"configuration","query":"subscription configuration($input:SubscribeInput!){subscribe(input:$input){id...on BasicMessage{data{__typename...on ConfigurationMessageData{colorPalette{colors{hex index __typename}__typename}canvasConfigurations{index dx dy __typename}activeZone{topLeft{x y __typename}bottomRight{ x y __typename} __typename}canvasWidth canvasHeight __typename}}__typename}__typename}}"}}')
 
+    def combine_and_save(self):
+        final_image = Image.new('RGBA', (3000, 2000))  # Create a new image with transparency
+        for idx, config in sorted(self.current_config.items()):
+            if config['completed'] and idx in self.fetched_files:
+                img = Image.open(self.fetched_files[idx])  # Retrieve the filename
+                final_image.paste(img, (config['startX'], config['startY']))
+        final_image.save(os.path.join(self.directory_name, f"{self.timestamp}.png"), "PNG")  # Save the final image in PNG format to retain transparency
+
+
     def fetch_image_from_url(self, url, index):
         response = requests.get(url)
-        filename = os.path.join(self.base_dir, f"{index}-{int(time.time())}.png")
+        filename = os.path.join(self.directory_name, f"{index}-{int(time.time())}.png")
         with open(filename, 'wb') as file:
             file.write(response.content)
         self.current_config[index]['completed'] = True
         self.fetched_files[index] = filename  # Save the filename
 
-    def combine_and_save(self):
-        final_image = Image.new('RGB', (2000, 2000))
-        for idx, config in sorted(self.current_config.items()):
-            if config['completed'] and idx in self.fetched_files:
-                img = Image.open(self.fetched_files[idx])  # Retrieve the filename
-                final_image.paste(img, (config['startX'], config['startY']))
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
-        final_image.save(os.path.join(self.base_dir, f"{timestamp}.png"))
+    def on_open(self, ws):
+        print("Connection opened")
+        self.directory_name = self.get_directory_name()  # Create the directory here
+        ws.send('{"type":"connection_init","payload":{"Authorization":"Bearer ' + self.auth_token + '"}}')
+        ws.send('{"id":"1","type":"start","payload":{"variables":{"input":{"channel":{"teamOwner":"GARLICBREAD","category":"CONFIG"}}},"extensions":{},"operationName":"configuration","query":"subscription configuration($input:SubscribeInput!){subscribe(input:$input){id...on BasicMessage{data{__typename...on ConfigurationMessageData{colorPalette{colors{hex index __typename}__typename}canvasConfigurations{index dx dy __typename}activeZone{topLeft{x y __typename}bottomRight{ x y __typename} __typename}canvasWidth canvasHeight __typename}}__typename}__typename}}"}}')
+
+    def run(self):
+        self.get_auth_token()
+        while True:
+            try:
+                ws = websocket.WebSocketApp("wss://gql-realtime-2.reddit.com/query",
+                                            on_message=self.on_message,
+                                            on_open=self.on_open)
+                ws.run_forever()
+            except Exception as ex:
+                self.get_auth_token()
+                print("ERROR")
+                print(str(ex))
+            self.combine_and_save()
+            time.sleep(30)
 
     def run(self):
         self.get_auth_token()
