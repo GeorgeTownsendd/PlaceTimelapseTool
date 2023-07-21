@@ -6,6 +6,17 @@ from typing import List
 from PIL import Image
 from datetime import datetime
 
+
+def reddit_to_image_coordinates(coord: tuple) -> tuple:
+    center = (1500, 1000)
+    return coord[0] + center[0], coord[1] + center[1]
+
+
+def image_to_reddit_coordinates(coord: tuple) -> tuple:
+    center = (1500, 1000)
+    return coord[0] - center[0], coord[1] - center[1]
+
+
 class Canvas:
     def __init__(self, filename: str, event, load_image: bool = False):
         self.filename = filename
@@ -54,18 +65,17 @@ class Section:
 
 
 class ReferenceSection(Section):
-    def __init__(self, top_left_image: tuple, top_left_reddit: tuple, width: int, height: int, correct_image: Image.Image):
+    def __init__(self, top_left_image: tuple, width: int, height: int, correct_image: Image.Image):
         super().__init__(top_left_image, width, height)
         self.correct_image = correct_image
-        self.top_left_reddit = top_left_reddit
+        self.top_left_reddit = image_to_reddit_coordinates(top_left_image)
 
     @classmethod
     def from_canvas(cls, top_left_image: tuple, width: int, height: int, canvas: Canvas):
         canvas.load_image()  # Ensure the image is loaded
         # Calculate bottom right coordinates for cropping
         bottom_right = (top_left_image[0] + width, top_left_image[1] + height)
-        top_left_reddit = image_to_reddit_coordinates(top_left_image)
-        section = cls(top_left_image, top_left_reddit, width, height, canvas.image.crop((*top_left_image, *bottom_right)))
+        section = cls(top_left_image, width, height, canvas.image.crop((*top_left_image, *bottom_right)))
         return section
 
     def save(self, path: str, section_name: str):
@@ -73,7 +83,6 @@ class ReferenceSection(Section):
         with open(os.path.join(path, f"{section_name}.json"), 'w') as f:
             json.dump({
                 'top_left_image': self.top_left,
-                'top_left_reddit': self.top_left_reddit,
                 'width': self.width,
                 'height': self.height
             }, f)
@@ -84,7 +93,9 @@ class ReferenceSection(Section):
         correct_image = Image.open(os.path.join(path, f"{section_name}.png"))
         with open(os.path.join(path, f"{section_name}.json"), 'r') as f:
             metadata = json.load(f)
-        return cls(metadata['top_left_image'], metadata['top_left_reddit'], metadata['width'], metadata['height'], correct_image)
+        top_left_image = metadata['top_left_image']
+        return cls(top_left_image, metadata['width'], metadata['height'], correct_image)
+
 
 class Event:
     def __init__(self, event_name: str):
@@ -118,17 +129,10 @@ class Event:
                 shutil.copy(image.filename, output_path)  # Copy the selected images to the output path
                 next_frame_time = image.timestamp
 
-def reddit_to_image_coordinates(coord: tuple) -> tuple:
-    center = (1500, 1000)
-    return tuple(map(lambda x, y: x + y, coord, center))
-
-def image_to_reddit_coordinates(coord: tuple) -> tuple:
-    center = (1500, 1000)
-    return tuple(map(lambda x, y: x - y, coord, center))
 
 if __name__ == "__main__":
     top_left_reddit = (227, 129)
     top_left_image = reddit_to_image_coordinates(top_left_reddit)
     event = Event("place_2023")
     canvas = event.canvas_images[0]
-    canvas.add_reference_section('test', top_left_image, top_left_reddit, 100, 100)
+    canvas.add_reference_section('test', top_left_image, 100, 100)
