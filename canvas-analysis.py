@@ -5,7 +5,8 @@ import glob
 from typing import List
 from PIL import Image
 from datetime import datetime
-
+import numpy as np
+import matplotlib.pyplot as plt
 
 def reddit_to_image_coordinates(coord: tuple) -> tuple:
     center = (1500, 1000)
@@ -70,6 +71,10 @@ class ReferenceSection(Section):
         self.correct_image = correct_image
         self.top_left_reddit = image_to_reddit_coordinates(top_left_image)
 
+    def get_correct_image_as_numpy(self) -> np.ndarray:
+        # Convert the correct_image to a NumPy array
+        return np.array(self.correct_image)
+
     @classmethod
     def from_canvas(cls, top_left_image: tuple, width: int, height: int, canvas: Canvas):
         canvas.load_image()  # Ensure the image is loaded
@@ -113,7 +118,7 @@ class Event:
     def _load_reference_sections(self) -> List[ReferenceSection]:
         # Load all reference sections in the directory
         section_dirs = glob.glob(os.path.join(self.reference_section_dir, '*'))
-        return [ReferenceSection.load(dir) for dir in section_dirs]
+        return {dir.split('/')[-1]: ReferenceSection.load(dir) for dir in section_dirs}
 
     def analyze(self):
         # Analyze the event's canvas images and reference sections
@@ -130,9 +135,48 @@ class Event:
                 next_frame_time = image.timestamp
 
 
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+
+def create_basic_timelapse(event, reference_section, output_path='frames/'):
+    os.makedirs(output_path, exist_ok=True)
+
+    for n, canvas_frame in enumerate(sorted(event.canvas_images, key=lambda x: x.timestamp)):
+        if canvas_frame.timestamp > datetime(2023, 7, 21, 13):
+            reference_section_state = reference_section.get_correct_image_as_numpy()
+            canvas_frame.load_image()
+            canvas_state = np.array(reference_section.extract_from_canvas(canvas_frame))
+            pixel_change_mask = (reference_section_state == canvas_state)
+            pixel_changes = np.zeros(reference_section_state.shape)
+            pixel_changes[pixel_change_mask] = 1
+            print(reference_section_state.shape, canvas_state.shape)
+
+            plt.figure(figsize=(12, 4))  # 3 columns, 4 inches height
+            plt.subplot(131)
+            plt.imshow(reference_section_state)
+            plt.title('Reference Image')
+
+            plt.subplot(132)
+            plt.imshow(canvas_state)
+            plt.title(f'Canvas State - {canvas_frame.timestamp}')
+
+            plt.subplot(133)
+            plt.imshow(pixel_changes, cmap='gray')
+            plt.title('Diff')
+
+            plt.savefig(os.path.join(output_path, f'frame{n}.jpg'))
+            plt.close()
+
+            print(f"Processed frame {n}")
+
+
+
 if __name__ == "__main__":
-    top_left_reddit = (227, 129)
+    top_left_reddit = (220, 120)
     top_left_image = reddit_to_image_coordinates(top_left_reddit)
     event = Event("place_2023")
-    canvas = event.canvas_images[0]
-    canvas.add_reference_section('test', top_left_image, 100, 100)
+
+    create_basic_timelapse(event, event.reference_sections['HelloInternet'])
+    #canvas = event.canvas_images[0]
+    #canvas.add_reference_section('HelloInternet', top_left_image, 50, 50)
