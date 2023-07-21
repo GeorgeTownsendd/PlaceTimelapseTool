@@ -101,12 +101,6 @@ class Archiver:
         os.makedirs(directory_name, exist_ok=True)
         return directory_name
 
-    def on_open(self, ws):
-        print("Connection opened")
-        self.directory_name = self.get_directory_name()  # Create the directory here
-        ws.send('{"type":"connection_init","payload":{"Authorization":"Bearer ' + self.auth_token + '"}}')
-        ws.send('{"id":"1","type":"start","payload":{"variables":{"input":{"channel":{"teamOwner":"GARLICBREAD","category":"CONFIG"}}},"extensions":{},"operationName":"configuration","query":"subscription configuration($input:SubscribeInput!){subscribe(input:$input){id...on BasicMessage{data{__typename...on ConfigurationMessageData{colorPalette{colors{hex index __typename}__typename}canvasConfigurations{index dx dy __typename}activeZone{topLeft{x y __typename}bottomRight{ x y __typename} __typename}canvasWidth canvasHeight __typename}}__typename}__typename}}"}}')
-
     def combine_and_save(self):
         final_image = Image.new('RGBA', (3000, 2000))  # Create a new image with transparency
         for idx, config in sorted(self.current_config.items()):
