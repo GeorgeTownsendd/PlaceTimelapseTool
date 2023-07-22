@@ -4,9 +4,13 @@ import shutil
 import glob
 from typing import List
 from PIL import Image
-from datetime import datetime
+from datetime import datetime, timedelta
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
+from tqdm import tqdm
+import subprocess
+import uuid
 
 def reddit_to_image_coordinates(coord: tuple) -> tuple:
     center = (1500, 1000)
@@ -45,7 +49,7 @@ class Canvas:
 
         # Save the reference section to disk and add it to the event's list of reference sections
         reference_section.save(section_dir, section_name)
-        self.event.reference_sections.append(reference_section)
+        self.event.reference_sections[section_name] = reference_section
 
 
 
@@ -124,59 +128,133 @@ class Event:
         # Analyze the event's canvas images and reference sections
         pass  # You need to implement this function
 
-    def prepare_timelapse(self, output_path: str, target_fps: int):
-        total_time = (self.canvas_images[-1].timestamp - self.canvas_images[0].timestamp).total_seconds()
-        ideal_frame_interval = total_time / target_fps
+    def create_basic_timelapse(self, reference_section_name: str = None, basic_version=False,
+                               output_path='frames/', start_time: datetime = datetime.utcnow() - timedelta(hours=2),
+                               end_time: datetime = datetime.utcnow(), coordinates_from: str = None):
 
-        next_frame_time = self.canvas_images[0].timestamp
-        for image in self.canvas_images:
-            if (image.timestamp - next_frame_time).total_seconds() >= ideal_frame_interval:
-                shutil.copy(image.filename, output_path)  # Copy the selected images to the output path
-                next_frame_time = image.timestamp
+        # Generate a unique ID for the timelapse
+        timelapse_id = str(uuid.uuid4())
+        timelapse_dir = os.path.join('canvas_data', self.event_name, 'timelapses', timelapse_id)
+        os.makedirs(timelapse_dir, exist_ok=True)
 
+        frames_to_process = sorted([canvas_frame for canvas_frame in self.canvas_images
+                                    if start_time < canvas_frame.timestamp < end_time],
+                                   key=lambda x: x.timestamp)
+        num_frames = len(frames_to_process)
 
-import os
-import numpy as np
-import matplotlib.pyplot as plt
+        # Define reference section name
+        if reference_section_name is None:
+            reference_section_name = f"timelapse_{timelapse_id}"
 
-def create_basic_timelapse(event, reference_section, output_path='frames/'):
-    os.makedirs(output_path, exist_ok=True)
+        if reference_section_name not in self.reference_sections:
+            # Use coordinates from a pre-existing reference section
+            if coordinates_from and coordinates_from in self.reference_sections:
+                pre_existing_section = self.reference_sections[coordinates_from]
+                top_left_image = pre_existing_section.top_left
+                width = pre_existing_section.width
+                height = pre_existing_section.height
+                frames_to_process[0].add_reference_section(reference_section_name, top_left_image, width, height)
+            else:
+                print("Error: Neither a reference section nor a set of coordinates were provided.")
+                return  # No reference section was created, so return without creating a timelapse
 
-    for n, canvas_frame in enumerate(sorted(event.canvas_images, key=lambda x: x.timestamp)):
-        if canvas_frame.timestamp > datetime(2023, 7, 21, 13):
-            reference_section_state = reference_section.get_correct_image_as_numpy()
-            canvas_frame.load_image()
-            canvas_state = np.array(reference_section.extract_from_canvas(canvas_frame))
-            pixel_change_mask = (reference_section_state == canvas_state)
-            pixel_changes = np.zeros(reference_section_state.shape)
-            pixel_changes[pixel_change_mask] = 1
-            print(reference_section_state.shape, canvas_state.shape)
+        reference_section = self.reference_sections[reference_section_name]
 
-            plt.figure(figsize=(12, 4))  # 3 columns, 4 inches height
-            plt.subplot(131)
-            plt.imshow(reference_section_state)
-            plt.title('Reference Image')
+        # Remove all previous .jpg files in output directory
+        files = glob.glob(os.path.join(output_path, '*.jpg'))
+        for f in files:
+            os.remove(f)
 
-            plt.subplot(132)
-            plt.imshow(canvas_state)
-            plt.title(f'Canvas State - {canvas_frame.timestamp}')
+        frames_to_process = sorted([canvas_frame for canvas_frame in self.canvas_images
+                                    if start_time < canvas_frame.timestamp < end_time],
+                                   key=lambda x: x.timestamp)
+        num_frames = len(frames_to_process)
 
-            plt.subplot(133)
-            plt.imshow(pixel_changes, cmap='gray')
-            plt.title('Diff')
+        with tqdm(total=num_frames, desc="Processing frames",
+                  bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}') as pbar:
+            for n, canvas_frame in enumerate(frames_to_process):
+                try:
+                    reference_section_state = reference_section.get_correct_image_as_numpy()
+                    canvas_frame.load_image()
+                    canvas_state = np.array(reference_section.extract_from_canvas(canvas_frame))
+                    pixel_change_mask = (reference_section_state == canvas_state)
+                    pixel_changes = np.zeros(reference_section_state.shape)
+                    pixel_changes[pixel_change_mask] = 1
 
-            plt.savefig(os.path.join(output_path, f'frame{n}.jpg'))
-            plt.close()
+                    fig = plt.figure(figsize=(12, 12))
 
-            print(f"Processed frame {n}")
+                    gs = GridSpec(4, 3, figure=fig)  # Changed GridSpec to a 6x3 grid
 
+                    if basic_version:
+                        ax1 = fig.add_subplot(gs[0, 0])
+                        ax2 = fig.add_subplot(gs[0, 1])
+                        ax3 = fig.add_subplot(gs[0, 2])
+                    else:
+                        ax1 = fig.add_subplot(gs[slice(0, 2), 0])
+                        ax2 = fig.add_subplot(gs[slice(0, 2), 1])
+                        ax3 = fig.add_subplot(gs[slice(0, 2), 2])
 
+                        ax4 = fig.add_subplot(gs[2, :])  # Middle row, one plot
+                        ax5 = fig.add_subplot(gs[3, :])  # Bottom row, one plot
+
+                        ax4.title.set_text('Additional Plot - Future Implementation')
+                        ax5.title.set_text('Additional Plot - Future Implementation')
+
+                    ax1.imshow(reference_section_state)
+                    ax1.title.set_text('Reference Image')
+
+                    ax2.imshow(canvas_state)
+                    ax2.title.set_text(f'Canvas State - {canvas_frame.timestamp}')
+
+                    ax3.imshow(pixel_changes, cmap='gray')
+                    ax3.title.set_text('Diff')
+
+                    plt.tight_layout()
+
+                    plt.savefig(os.path.join(output_path, f'frame{n}.jpg'))
+                    plt.close('all')
+                    pbar.update()
+
+                except FileNotFoundError:
+                    print(f"File not found for timestamp: {canvas_frame.timestamp}")
+                except Exception as e:
+                    print(f"An error occurred while processing frame {n}: {e}")
+
+        # Run the shell script after all frames have been rendered
+        try:
+            print("Starting rendering with render.sh...")
+            subprocess.check_call(["bash", f"{output_path}/render.sh"])
+            print("Rendering completed. The output file should be located in the frames/ directory.")
+
+            # Copy the mp4 file, reference section, and JSON to the new directory
+            shutil.copy(f"{output_path}/output.mp4", timelapse_dir)  # Assuming the rendered file is named "output.mp4"
+            shutil.copy(
+                os.path.join(self.reference_section_dir, reference_section_name, f"{reference_section_name}.png"),
+                timelapse_dir)
+            shutil.copy(
+                os.path.join(self.reference_section_dir, reference_section_name, f"{reference_section_name}.json"),
+                timelapse_dir)
+
+            # Create the metadata JSON
+            metadata = {
+                "start_time": start_time.isoformat(),
+                "end_time": end_time.isoformat(),
+                "num_frames": num_frames
+            }
+            with open(os.path.join(timelapse_dir, "metadata.json"), 'w') as f:
+                json.dump(metadata, f)
+
+        except subprocess.CalledProcessError:
+            print("An error occurred while trying to run the shell script.")
 
 if __name__ == "__main__":
-    top_left_reddit = (220, 120)
+    #top_left_reddit = (220, 120)
+    top_left_reddit = (190, 135)
     top_left_image = reddit_to_image_coordinates(top_left_reddit)
     event = Event("place_2023")
 
-    create_basic_timelapse(event, event.reference_sections['HelloInternet'])
-    #canvas = event.canvas_images[0]
-    #canvas.add_reference_section('HelloInternet', top_left_image, 50, 50)
+    event.create_basic_timelapse(coordinates_from='NormalHair', start_time=datetime.utcnow() - timedelta(hours=2))
+
+    #create_basic_timelapse(event, event.reference_sections['NormalHair'])
+    #canvas = event.canvas_images[1900]
+    #canvas.add_reference_section('NormalHair', top_left_image, 60, 60)
