@@ -1,10 +1,16 @@
 A simple archival/visualization tool written for the second Reddit /r/place event.
 
-# Timelapse Tool
+# Archive Tool (2023)
+
+![](https://github.com/GeorgeTownsendd/PlaceTimelapseTool/blob/testing/examples/archive_structure.png)
+
+(inspired by https://github.com/ProstoSanja/place-2022/tree/master - see linked readme for instructions on creating authparams.py)
+
+# Timelapse Tool (2022)
 
 ![](https://github.com/GeorgeTownsendd/PlaceTimelapseTool/blob/master/examples/example.gif)
 
-# Change Velocity Tool
+# Change Velocity Tool (2022)
 
 ![](https://github.com/GeorgeTownsendd/PlaceTimelapseTool/blob/master/examples/example.png)
 
