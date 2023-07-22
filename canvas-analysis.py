@@ -330,19 +330,19 @@ class Event:
 
 
 if __name__ == "__main__":
-    #top_left_reddit = (-870, 185)
+    top_left_reddit = (205, 123)
     #top_left_reddit = (215, 125)
-    #top_left_image = reddit_to_image_coordinates(top_left_reddit)
+    top_left_image = reddit_to_image_coordinates(top_left_reddit)
     event = Event("place_2023")
 
     # Use last one hour time frame
-    end_time = datetime.utcnow()
-    start_time = end_time - timedelta(hours=1.5)
+    #end_time = datetime.utcnow()
+    #start_time = end_time - timedelta(hours=1.5)
 
     #generate_heatmap(event, event.reference_sections['AmongUs'], start_time, end_time)
 
-    event.create_basic_timelapse(coordinates_from='NormalHair', start_time=datetime.utcnow() - timedelta(hours=1.5))#, end_time=datetime.utcnow()-timedelta(hours=4.5))
+    event.create_basic_timelapse(coordinates_from='HIDefense', start_time=datetime.utcnow() - timedelta(hours=1.5))#, end_time=datetime.utcnow()-timedelta(hours=4.5))
 
     #create_basic_timelapse(event, event.reference_sections['NormalHair'])
     #canvas = event.canvas_images[1900]
-    #event.canvas_images[-1].add_reference_section('AmongUs', top_left_image, 100, 100)
+    #event.canvas_images[-1].add_reference_section('HIDefense', top_left_image, 35, 35)
