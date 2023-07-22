@@ -7,6 +7,7 @@ from PIL import Image
 from datetime import datetime, timedelta
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from matplotlib.gridspec import GridSpec
 from tqdm import tqdm
 import subprocess
@@ -132,6 +133,15 @@ class Event:
                                output_path='frames/', start_time: datetime = datetime.utcnow() - timedelta(hours=2),
                                end_time: datetime = datetime.utcnow(), coordinates_from: str = None):
 
+        # Customizing matplotlib parameters
+        plt.rc('font', size=12)  # controls default text sizes
+        plt.rc('axes', titlesize=18)  # fontsize of the axes title
+        plt.rc('axes', labelsize=20)  # fontsize of the x and y labels
+        plt.rc('xtick', labelsize=15)  # fontsize of the tick labels
+        plt.rc('ytick', labelsize=15)  # fontsize of the tick labels
+        plt.rc('legend', fontsize=12)  # legend fontsize
+        plt.rc('figure', titlesize=25)  # fontsize of the figure title
+
         # Generate a unique ID for the timelapse
         timelapse_id = str(uuid.uuid4())
         timelapse_dir = os.path.join('canvas_data', self.event_name, 'timelapses', timelapse_id)
@@ -141,6 +151,10 @@ class Event:
                                     if start_time < canvas_frame.timestamp < end_time],
                                    key=lambda x: x.timestamp)
         num_frames = len(frames_to_process)
+
+        if num_frames == 0:
+            print("No frames were loaded. Please increase the time interval.")
+            return
 
         # Define reference section name
         if reference_section_name is None:
@@ -153,7 +167,7 @@ class Event:
                 top_left_image = pre_existing_section.top_left
                 width = pre_existing_section.width
                 height = pre_existing_section.height
-                frames_to_process[0].add_reference_section(reference_section_name, top_left_image, width, height)
+                frames_to_process[-1].add_reference_section(reference_section_name, top_left_image, width, height)
             else:
                 print("Error: Neither a reference section nor a set of coordinates were provided.")
                 return  # No reference section was created, so return without creating a timelapse
@@ -165,18 +179,65 @@ class Event:
         for f in files:
             os.remove(f)
 
-        frames_to_process = sorted([canvas_frame for canvas_frame in self.canvas_images
-                                    if start_time < canvas_frame.timestamp < end_time],
-                                   key=lambda x: x.timestamp)
-        num_frames = len(frames_to_process)
+        # Preprocess pixel changes and timestamps
+        previous_state = None
+        pixel_changes_list = []
+        wrong_pixel_list = []
+        timestamps_list = []
+        pixel_change_rate_list = [0]  # Initialize the first frame pixel change rate as 0
+        net_change_list = [0]  # Initialize the first frame net change as 0
 
-        with tqdm(total=num_frames, desc="Processing frames",
+        with tqdm(total=num_frames, desc="Preprocessing frames",
+                  bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}') as pbar:
+            for n, canvas_frame in enumerate(frames_to_process):
+                canvas_frame.load_image()
+                canvas_state = np.array(reference_section.extract_from_canvas(canvas_frame))
+
+                if n == 0:
+                    timestamps_list.append(canvas_frame.timestamp)
+                    pixel_changes_list.append(0)
+                    wrong_pixel_list.append(0)
+                    previous_state = canvas_state
+                    reference_image = reference_section.get_correct_image_as_numpy()
+                else:
+                    # vs previous state
+                    pixel_change_mask = (previous_state != canvas_state)
+                    num_pixel_changes = pixel_change_mask.sum()
+                    pixel_changes_list.append(num_pixel_changes)
+
+                    # Calculate pixel change rate (pixel per second)
+                    time_diff = (canvas_frame.timestamp - timestamps_list[-1]).total_seconds()
+                    pixel_change_rate = num_pixel_changes / time_diff if time_diff != 0 else 0
+                    pixel_change_rate_list.append(pixel_change_rate)
+
+                    # vs reference image
+                    wrong_pixel_mask = (canvas_state != reference_image)
+                    num_wrong_pixels = wrong_pixel_mask.sum()
+                    wrong_pixel_list.append(num_wrong_pixels)
+
+                    # Calculate net change
+                    net_change = (wrong_pixel_list[-1] - wrong_pixel_list[-2])
+                    net_change_list.append(net_change)
+
+                    # Add the timestamp to the list
+                    timestamps_list.append(canvas_frame.timestamp)
+                    pbar.update()
+
+                    previous_state = canvas_state
+
+        max_pixel_changes = max(pixel_changes_list)
+        max_wrong_pixel_changes = max(wrong_pixel_list)
+        max_pixel_change_rate = max(pixel_change_rate_list)
+        max_net_change = max(abs(min(net_change_list)), abs(max(net_change_list)))
+
+        with tqdm(total=num_frames, desc="Rendering frames",
                   bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}') as pbar:
             for n, canvas_frame in enumerate(frames_to_process):
                 try:
                     reference_section_state = reference_section.get_correct_image_as_numpy()
                     canvas_frame.load_image()
                     canvas_state = np.array(reference_section.extract_from_canvas(canvas_frame))
+
                     pixel_change_mask = (reference_section_state == canvas_state)
                     pixel_changes = np.zeros(reference_section_state.shape)
                     pixel_changes[pixel_change_mask] = 1
@@ -197,20 +258,39 @@ class Event:
                         ax4 = fig.add_subplot(gs[2, :])  # Middle row, one plot
                         ax5 = fig.add_subplot(gs[3, :])  # Bottom row, one plot
 
-                        ax4.title.set_text('Additional Plot - Future Implementation')
-                        ax5.title.set_text('Additional Plot - Future Implementation')
+                        ax4.title.set_text('Pixel Change Rate (vs previous frame) per Second')
+                        ax5.title.set_text('Pixel Errors (vs Reference Image)')
+
+                        # Plot the number of pixel changes over time
+                        ax4.plot(timestamps_list[:n + 1], pixel_change_rate_list[:n + 1], color='blue', lw=5)
+                        ax5.plot(timestamps_list[:n + 1], wrong_pixel_list[:n + 1], color='blue', lw=5)
+
+                        # Set the x and y axis limits
+                        ax4.set_xlim([start_time, end_time])
+                        ax5.set_xlim([start_time, end_time])
+                        ax4.set_ylim([0, max_pixel_change_rate])
+                        ax5.set_ylim([0, max_wrong_pixel_changes])
 
                     ax1.imshow(reference_section_state)
                     ax1.title.set_text('Reference Image')
 
                     ax2.imshow(canvas_state)
-                    ax2.title.set_text(f'Canvas State - {canvas_frame.timestamp}')
+                    ax2.title.set_text(f'{canvas_frame.timestamp} UTC')
 
                     ax3.imshow(pixel_changes, cmap='gray')
                     ax3.title.set_text('Diff')
-
                     plt.tight_layout()
 
+                    # Apply the date formatter to the x-axis
+                    ax4.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d %H:%M'))
+                    ax5.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d %H:%M'))
+
+                    ax4.xaxis.set_major_locator(mdates.MinuteLocator(byminute=[0, 10, 20, 30, 40, 50]))
+                    ax5.xaxis.set_major_locator(mdates.MinuteLocator(byminute=[0, 10, 20, 30, 40, 50]))
+
+                    # Rotate the date labels for better visibility
+                    plt.gcf().autofmt_xdate()
+                    plt.tight_layout()
                     plt.savefig(os.path.join(output_path, f'frame{n}.jpg'))
                     plt.close('all')
                     pbar.update()
@@ -247,14 +327,22 @@ class Event:
         except subprocess.CalledProcessError:
             print("An error occurred while trying to run the shell script.")
 
+
+
 if __name__ == "__main__":
-    #top_left_reddit = (220, 120)
-    top_left_reddit = (190, 135)
-    top_left_image = reddit_to_image_coordinates(top_left_reddit)
+    #top_left_reddit = (-870, 185)
+    #top_left_reddit = (215, 125)
+    #top_left_image = reddit_to_image_coordinates(top_left_reddit)
     event = Event("place_2023")
 
-    event.create_basic_timelapse(coordinates_from='NormalHair', start_time=datetime.utcnow() - timedelta(hours=2))
+    # Use last one hour time frame
+    end_time = datetime.utcnow()
+    start_time = end_time - timedelta(hours=1.5)
+
+    #generate_heatmap(event, event.reference_sections['AmongUs'], start_time, end_time)
+
+    event.create_basic_timelapse(coordinates_from='NormalHair', start_time=datetime.utcnow() - timedelta(hours=1.5))#, end_time=datetime.utcnow()-timedelta(hours=4.5))
 
     #create_basic_timelapse(event, event.reference_sections['NormalHair'])
     #canvas = event.canvas_images[1900]
-    #canvas.add_reference_section('NormalHair', top_left_image, 60, 60)
+    #event.canvas_images[-1].add_reference_section('AmongUs', top_left_image, 100, 100)
