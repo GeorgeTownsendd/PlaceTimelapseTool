@@ -12,18 +12,67 @@ from matplotlib.gridspec import GridSpec
 from tqdm import tqdm
 import subprocess
 import uuid
+import requests
+import urllib
+import io
 
-def reddit_to_image_coordinates(coord: tuple) -> tuple:
-    center = (1500, 1000)
-    return coord[0] + center[0], coord[1] + center[1]
+class Coordinate:
+    def __init__(self, x: int, y: int, coord_type: str):
+        """Initialize a Coordinate object."""
+        if coord_type == "image":
+            self.image_coord = (x, y)
+            self.reddit_coord = self.image_to_reddit_coordinates((x, y))
+            self.template_coord = self.image_to_template_coordinates((x, y))
+        elif coord_type == "reddit":
+            self.reddit_coord = (x, y)
+            self.image_coord = self.reddit_to_image_coordinates((x, y))
+            self.template_coord = self.image_to_template_coordinates(self.image_coord)
+        elif coord_type == "template":
+            self.template_coord = (x, y)
+            self.image_coord = self.template_to_image_coordinates((x, y))
+            self.reddit_coord = self.image_to_reddit_coordinates(self.image_coord)
+        else:
+            raise ValueError("Invalid coordinate type. Choose from 'image', 'reddit', or 'template'.")
 
+    @staticmethod
+    def reddit_to_image_coordinates(coord: tuple) -> tuple:
+        return coord[0] + 1500, coord[1] + 1000
 
-def image_to_reddit_coordinates(coord: tuple) -> tuple:
-    center = (1500, 1000)
-    return coord[0] - center[0], coord[1] - center[1]
+    @staticmethod
+    def image_to_reddit_coordinates(coord: tuple) -> tuple:
+        return coord[0] - 1500, coord[1] - 1000
+
+    @staticmethod
+    def template_to_image_coordinates(coord: tuple) -> tuple:
+        return coord[0] + 1000, coord[1] + 500
+
+    @staticmethod
+    def image_to_template_coordinates(coord: tuple) -> tuple:
+        return coord[0] - 1000, coord[1] - 500
+
+    @staticmethod
+    def reddit_to_template_coordinates(coord: tuple) -> tuple:
+        image_coord = Coordinate.reddit_to_image_coordinates(coord)
+        return Coordinate.image_to_template_coordinates(image_coord)
+
+    @staticmethod
+    def template_to_reddit_coordinates(coord: tuple) -> tuple:
+        image_coord = Coordinate.template_to_image_coordinates(coord)
+        return Coordinate.image_to_reddit_coordinates(image_coord)
+
+    def get_image_coordinates(self):
+        return self.image_coord
+
+    def get_reddit_coordinates(self):
+        return self.reddit_coord
+
+    def get_template_coordinates(self):
+        return self.template_coord
+
 
 
 class Canvas:
+    """Represents a snapshot of the canvas at a particular time."""
     def __init__(self, filename: str, event, load_image: bool = False):
         self.filename = filename
         self.event = event
@@ -31,83 +80,135 @@ class Canvas:
         self.timestamp = self._extract_timestamp_from_filename()
 
     def _extract_timestamp_from_filename(self):
-        # Extract timestamp from filename and convert to datetime
         timestamp_str = os.path.basename(self.filename).split('.')[0]
         return datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
 
     def load_image(self):
-        # Load the image if it has not been loaded
         if self.image is None:
             self.image = Image.open(self.filename)
 
-    def add_reference_section(self, section_name: str, top_left: tuple, width: int, height: int):
-        # Create a reference section from this canvas
-        reference_section = ReferenceSection.from_canvas(top_left, width, height, self)
-
-        # Define the path where to save the reference section
+    def add_reference_section(self, section_name: str, top_left: Coordinate, width: int, height: int):
+        reference_section = ReferenceSection.from_canvas(event.event_name, section_name, top_left, width, height, self)
         section_dir = os.path.join(self.event.reference_section_dir, section_name)
         os.makedirs(section_dir, exist_ok=True)
-
-        # Save the reference section to disk and add it to the event's list of reference sections
-        reference_section.save(section_dir, section_name)
+        reference_section.save()
         self.event.reference_sections[section_name] = reference_section
 
 
-
 class Section:
-    def __init__(self, top_left: tuple, width: int, height: int):
+    """Represents a defined section on the canvas."""
+    def __init__(self, top_left: Coordinate, width: int, height: int):
         self.top_left = top_left
         self.width = width
         self.height = height
-        self.bottom_right = (top_left[0]+width, top_left[1]+height)  # Calculate bottom right coordinate of rectangle
+        self.bottom_right = (self.top_left.get_image_coordinates()[0] + width, self.top_left.get_image_coordinates()[1] + height)
 
     def extract_from_canvas(self, canvas: Canvas):
-        # Load the image if it has not been loaded
         canvas.load_image()
-
-        # Extract the section from the given canvas image using PIL's crop function
-        # Return the cropped image
-        return canvas.image.crop((*self.top_left, *self.bottom_right))
-
+        return canvas.image.crop((*self.top_left.get_image_coordinates(), *self.bottom_right))
 
 class ReferenceSection(Section):
-    def __init__(self, top_left_image: tuple, width: int, height: int, correct_image: Image.Image):
-        super().__init__(top_left_image, width, height)
+    """Represents a reference section on the canvas, containing the 'correct' state of the section."""
+    def __init__(self, event_name: str, name: str, top_left: Coordinate, width: int, height: int, correct_image: Image.Image, contact="Tim Army (Hello Internet)"):
+        super().__init__(top_left, width, height)
         self.correct_image = correct_image
-        self.top_left_reddit = image_to_reddit_coordinates(top_left_image)
+        self.contact = contact
+        self.name = name
+        self.event_name = event_name
+        self.path = os.path.join('canvas_data', self.event_name, 'reference_sections', self.name)
 
     def get_correct_image_as_numpy(self) -> np.ndarray:
-        # Convert the correct_image to a NumPy array
         return np.array(self.correct_image)
 
     @classmethod
-    def from_canvas(cls, top_left_image: tuple, width: int, height: int, canvas: Canvas):
-        canvas.load_image()  # Ensure the image is loaded
-        # Calculate bottom right coordinates for cropping
-        bottom_right = (top_left_image[0] + width, top_left_image[1] + height)
-        section = cls(top_left_image, width, height, canvas.image.crop((*top_left_image, *bottom_right)))
+    def from_canvas(cls, event_name: str, name: str, top_left: Coordinate, width: int, height: int, canvas: Canvas):
+        canvas.load_image()
+        bottom_right = Coordinate(top_left.get_image_coordinates()[0] + width, top_left.get_image_coordinates()[1] + height, 'image')
+        section = cls(event_name, name, top_left, width, height, canvas.image.crop((*top_left.get_image_coordinates(), *bottom_right.get_image_coordinates())))
         return section
 
-    def save(self, path: str, section_name: str):
-        self.correct_image.save(os.path.join(path, f"{section_name}.png"), "PNG")
-        with open(os.path.join(path, f"{section_name}.json"), 'w') as f:
+    def save(self):
+        with open(os.path.join(self.path, f"{self.name}.json"), 'w') as f:
             json.dump({
-                'top_left_image': self.top_left,
-                'width': self.width,
-                'height': self.height
+                'contact': 'Tim Army (Hello Internet)',
+                'templates': [{
+                    'name': self.name,
+                    'sources': [os.path.join(self.path, f"{self.name}.png")],
+                    'x': self.top_left.get_template_coordinates()[0],
+                    'y': self.top_left.get_template_coordinates()[1],
+                    'top_left_image': self.top_left.get_image_coordinates(),
+                    'top_left_reddit': self.top_left.get_reddit_coordinates(),
+                    'top_left_template': self.top_left.get_template_coordinates(),
+                    'width': self.width,
+                    'height': self.height
+                }],
+                'whitelist': [],
+                'blacklist': []
             }, f)
 
     @classmethod
     def load(cls, path: str) -> 'ReferenceSection':
+        event_name = path.split('/')[1]
         section_name = os.path.basename(path)
-        correct_image = Image.open(os.path.join(path, f"{section_name}.png"))
-        with open(os.path.join(path, f"{section_name}.json"), 'r') as f:
+
+        image_path = os.path.join(path, f"{section_name}.png")
+        json_path = os.path.join(path, f"{section_name}.json")
+        if not os.path.exists(image_path) or not os.path.exists(json_path):
+            print(f"Warning: Skipping loading of section {section_name} due to missing files.")
+            return None
+
+        correct_image = Image.open(image_path)
+        with open(json_path, 'r') as f:
             metadata = json.load(f)
-        top_left_image = metadata['top_left_image']
-        return cls(top_left_image, metadata['width'], metadata['height'], correct_image)
+
+        template_metadata = metadata['templates'][0]
+        top_left_image = template_metadata.get('top_left_image', None)
+        top_left_reddit = template_metadata.get('top_left_reddit', None)
+        top_left_template = template_metadata.get('top_left_template', None)
+        if not top_left_image:
+            top_left_image = Coordinate(template_metadata['x'], template_metadata['y'], 'template').get_image_coordinates()
+        if not top_left_reddit:
+            top_left_reddit = Coordinate(template_metadata['x'], template_metadata['y'], 'template').get_reddit_coordinates()
+        if not top_left_template:
+            top_left_template = (template_metadata['x'], template_metadata['y'])
+        top_left = Coordinate(top_left_image[0], top_left_image[1], 'image')
+        width = template_metadata.get('width', 100)
+        height = template_metadata.get('height', 100)
+        return cls(event_name, section_name, top_left, width, height, correct_image)
+
+    @classmethod
+    def download_reference_section(cls, url: str, event_name: str, save: bool = True) -> 'ReferenceSection':
+        response = requests.get(url)
+        response.raise_for_status()
+        metadata = response.json()
+        template_metadata = metadata['templates'][0]
+        name = template_metadata.get('name', '')
+        source = template_metadata['sources'][0] if 'sources' in template_metadata and len(
+            template_metadata['sources']) > 0 else ''
+        x, y = template_metadata['x'], template_metadata['y']
+        top_left = Coordinate(x, y, 'template')
+        print(top_left.image_coord)
+        width, height = template_metadata.get('width', None), template_metadata.get('height', None)
+        correct_image = None
+        if source.startswith('http'):
+            image_response = requests.get(source, stream=True)
+            image_response.raise_for_status()
+            correct_image = Image.open(io.BytesIO(image_response.content))
+            width, height = correct_image.size
+            if save:  # Save the image file locally
+                image_path = os.path.join('canvas_data', event_name, 'reference_sections', name, f"{name}.png")
+                os.makedirs(os.path.dirname(image_path), exist_ok=True)  # Ensure the directories exist
+                correct_image.save(image_path)
+        else:
+            correct_image = Image.open(source)
+        ref_section = cls(event_name, name, top_left, width, height, correct_image)
+        if save:
+            ref_section.save()
+        return ref_section
 
 
 class Event:
+    """Represents an event and contains related canvas images and reference sections."""
     def __init__(self, event_name: str):
         self.event_name = event_name
         self.canvas_dir = os.path.join('canvas_data', event_name, 'canvas')
@@ -116,18 +217,20 @@ class Event:
         self.reference_sections = self._load_reference_sections()
 
     def _load_canvas_images(self) -> List[Canvas]:
-        # Load all canvas images in the directory
         canvas_dirs = glob.glob(os.path.join(self.canvas_dir, '*'))
-        return [Canvas(os.path.join(dir, f"{os.path.basename(dir)}.png"), self) for dir in canvas_dirs]
+        canvas_images = []
+        for dir in canvas_dirs:
+            filename = os.path.join(dir, f"{os.path.basename(dir)}.png")
+            if os.path.exists(filename):  # Check if the file exists
+                canvas_images.append(Canvas(filename, self))
+        return canvas_images
 
     def _load_reference_sections(self) -> List[ReferenceSection]:
-        # Load all reference sections in the directory
         section_dirs = glob.glob(os.path.join(self.reference_section_dir, '*'))
         return {dir.split('/')[-1]: ReferenceSection.load(dir) for dir in section_dirs}
 
     def analyze(self):
-        # Analyze the event's canvas images and reference sections
-        pass  # You need to implement this function
+        pass  # Placeholder method for future implementation
 
     def create_basic_timelapse(self, reference_section_name: str = None, basic_version=False,
                                output_path='frames/', start_time: datetime = datetime.utcnow() - timedelta(hours=2),
@@ -330,19 +433,27 @@ class Event:
 
 
 if __name__ == "__main__":
-    top_left_reddit = (205, 123)
-    #top_left_reddit = (215, 125)
-    top_left_image = reddit_to_image_coordinates(top_left_reddit)
     event = Event("place_2023")
+    start_time = datetime.utcnow() - timedelta(hours=1)
+    end_time = datetime.utcnow()
+    ref_section = ReferenceSection.download_reference_section('https://brown.ee/LMoP1Zmv.json', 'place_2023')
+    event.create_basic_timelapse(ref_section.name, start_time, end_time)
+
+    #top_left_reddit = (-500, 178)
+    #top_left_reddit = (215, 125)
+    #top_left = Coordinate(215, 115, 'reddit')#reddit_to_image_coordinates(top_left_reddit)
+    #event = Event("place_2023")
+
+    #ref_section = ReferenceSection.download_reference_section('https://brown.ee/LMoP1Zmv.json', 'place_2023')
 
     # Use last one hour time frame
     #end_time = datetime.utcnow()
     #start_time = end_time - timedelta(hours=1.5)
 
-    #generate_heatmap(event, event.reference_sections['AmongUs'], start_time, end_time)
+    #generate_heatmap(event, 'event.reference_sections['AmongUs']', start_time, end_time)
 
-    event.create_basic_timelapse(coordinates_from='HIDefense', start_time=datetime.utcnow() - timedelta(hours=1.5))#, end_time=datetime.utcnow()-timedelta(hours=4.5))
+    event.create_basic_timelapse(reference_section_name='HI 13x13 + Audery', start_time=datetime.utcnow() - timedelta(hours=12), end_time=datetime.utcnow()-timedelta(hours=11.75))
 
     #create_basic_timelapse(event, event.reference_sections['NormalHair'])
     #canvas = event.canvas_images[1900]
-    #event.canvas_images[-1].add_reference_section('HIDefense', top_left_image, 35, 35)
+    #event.canvas_images[-1000].add_reference_section('test', top_left, 50, 50)
