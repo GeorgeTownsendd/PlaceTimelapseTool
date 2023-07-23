@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from matplotlib import ticker
 from matplotlib.gridspec import GridSpec
 from tqdm import tqdm
 import subprocess
@@ -447,3 +448,85 @@ class Event:
         except subprocess.CalledProcessError:
             print("An error occurred while trying to run the shell script.")
 
+    def generate_change_history_image(self, reference_section_name: str, threshold_time: timedelta):
+        """Generate an image where each pixel color indicates how recently it was last changed."""
+        # Step 1: Load the most recent canvas instance
+        current_canvas = self.canvas_images[-1]
+        current_canvas.load_image()
+        current_section = self.reference_sections[reference_section_name]
+        current_state = np.array(current_section.extract_from_canvas(current_canvas))
+
+        # Initialize a change history array with the same size as the current state
+        change_history = np.full(current_state.shape[:2], np.inf)  # Initialize with infinity (no change yet)
+
+        # Select canvases within the desired time range
+        threshold_timestamp = current_canvas.timestamp - threshold_time
+        relevant_canvases = [canvas for canvas in reversed(self.canvas_images[:-1]) if
+                             canvas.timestamp >= threshold_timestamp]
+
+        # Step 2: Iterate backward through the canvas history
+        for canvas in tqdm(relevant_canvases, desc="Processing canvases", total=len(relevant_canvases)):
+            canvas.load_image()
+            past_state = np.array(current_section.extract_from_canvas(canvas))
+
+            # Step 3: Pixel-wise comparison
+            change_mask = np.any(past_state != current_state, axis=-1)
+
+            # Step 4: Maintain a history of changes
+            change_history[np.where(change_mask)] = (current_canvas.timestamp - canvas.timestamp).total_seconds()
+
+            # Step 5: Terminate the search
+            if np.all(change_history < np.inf):
+                break
+
+            current_state = past_state
+            current_canvas = canvas
+
+        # Normalize change_history to grayscale range
+        max_time = change_history[change_history < np.inf].max()  # Get maximum non-infinity value
+        change_history[change_history == np.inf] = max_time  # Replace infinities with maximum time
+        change_history_normalized = (255 * (1.0 - change_history / max_time)).astype(
+            np.uint8)  # Normalize to [0, 255] and invert
+
+        # Normalize change_history to grayscale range
+        max_time = change_history[change_history < np.inf].max()  # Get maximum non-infinity value
+        change_history[change_history == np.inf] = 0  # Most recent changes are now represented as 0
+        change_history_normalized = (255 * (1.0 - change_history / max_time)).astype(
+            np.uint8)  # Normalize to [0, 255] and invert
+
+        # Normalize change_history to grayscale range
+        max_time = change_history[change_history < np.inf].max()  # Get maximum non-infinity value
+        change_history[change_history == np.inf] = 0  # Most recent changes are now represented as 0
+        change_history_normalized = (255 * (1.0 - change_history / max_time)).astype(
+            np.uint8)  # Normalize to [0, 255] and invert
+
+        # Step 6: Normalize and visualize the results
+        history_image = Image.fromarray(change_history_normalized)
+
+        # Display the heatmap and reference section side by side
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
+
+        # Display reference section
+        reference_image = np.array(current_section.get_correct_image_as_numpy())
+        ax1.imshow(reference_image)
+        ax1.set_title("Reference Section")
+
+        # Display heatmap
+        im = ax2.imshow(change_history, cmap='magma_r', interpolation='nearest', vmin=0, vmax=max_time)
+        start_time_str = current_canvas.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        ax2.set_title(f"Change History Heatmap\n(start time: {start_time_str}, search range: {str(threshold_time)})")
+
+        # Add colorbar
+        cbar = fig.colorbar(im, ax=ax2)
+
+        def format_func(value, tick_number):
+            """Convert number of seconds to 'mm:ss' format."""
+            return f'{value // 60:.0f}:{value % 60:02.0f}'
+
+        cbar.ax.yaxis.set_major_formatter(ticker.FuncFormatter(format_func))
+        cbar.set_label('Time since last change')
+
+        plt.tight_layout()
+        plt.show()
+
+        return history_image

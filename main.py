@@ -2,10 +2,11 @@ from canvas_analysis import *
 
 
 if __name__ == "__main__":
-    #event = Event("place_2023")
+    event = Event("place_2023")
+    x = event.generate_change_history_image('NG 15x15 + HI 11x11 + 11x6FF + other things + robot', timedelta(hours=3))
     #start_time = datetime.utcnow() - timedelta(hours=2)
     #end_time = datetime.utcnow()
-    ref_section = ReferenceSection.download_reference_sections('https://rentry.co/HITemplate/raw', 'place_2023')
+    #ref_section = ReferenceSection.download_reference_sections('https://rentry.co/HITemplate/raw', 'place_2023')
 
     #event.create_basic_timelapse('NG 15x15 + HI 11x11 + 11x6FF + other things_p2', start_time=start_time, end_time=end_time)
 
