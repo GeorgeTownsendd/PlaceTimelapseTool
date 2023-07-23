@@ -13,8 +13,8 @@ from tqdm import tqdm
 import subprocess
 import uuid
 import requests
-import urllib
 import io
+
 
 class Coordinate:
     def __init__(self, x: int, y: int, coord_type: str):
@@ -62,7 +62,6 @@ class Coordinate:
         reddit_coord = Coordinate.image_to_reddit_coordinates(*coord)
         return reddit_coord
 
-
     def get_image_coordinates(self):
         return self.image_coord
 
@@ -71,7 +70,6 @@ class Coordinate:
 
     def get_template_coordinates(self):
         return self.template_coord
-
 
 
 class Canvas:
@@ -99,19 +97,8 @@ class Canvas:
         if np.all(self.image == np.array([255, 255, 255, 255])):
             print(f"The canvas instance at {self.timestamp} may be missing")
 
-        #print('loading')
-        #print(isinstance(self.image, type(None)))
-        #if isinstance(self.image, type(None)):
-        #    image = Image.open(self.filename)
-        #    if image.mode != 'RGBA':
-        #        image = image.convert('RGBA')
-        #
-        #    self.image = image
-
-
-
     def add_reference_section(self, section_name: str, top_left: Coordinate, width: int, height: int):
-        reference_section = ReferenceSection.from_canvas(event.event_name, section_name, top_left, width, height, self)
+        reference_section = ReferenceSection.from_canvas(self.event.event_name, section_name, top_left, width, height, self)
         section_dir = os.path.join(self.event.reference_section_dir, section_name)
         print(section_dir)
         os.makedirs(section_dir, exist_ok=True)
@@ -221,11 +208,10 @@ class ReferenceSection(Section):
         response.raise_for_status()
         metadata = response.json()
 
-        ref_sections = []  # To hold all the ReferenceSection instances
+        ref_sections = []
 
-        for index, template_metadata in enumerate(metadata['templates'], start=1):  # Added enumeration to get index
-            base_name = template_metadata.get('name', '')
-            name = f"{base_name}_p{index}"  # Disambiguated name
+        for index, template_metadata in enumerate(metadata['templates'], start=1):
+            name = template_metadata.get('name', '')
             source = template_metadata['sources'][0] if 'sources' in template_metadata and len(
                 template_metadata['sources']) > 0 else ''
             x, y = template_metadata['x'], template_metadata['y']
@@ -251,7 +237,7 @@ class ReferenceSection(Section):
                 ref_section.save()
             ref_sections.append(ref_section)
 
-        return ref_sections  # Return the list of ReferenceSection instances
+        return ref_sections
 
 
 class Event:
@@ -268,7 +254,7 @@ class Event:
         canvas_images = []
         for dir in canvas_dirs:
             filename = os.path.join(dir, f"{os.path.basename(dir)}.png")
-            if os.path.exists(filename):  # Check if the file exists
+            if os.path.exists(filename):
                 canvas_images.append(Canvas(filename, self))
         canvas_images.sort(key=lambda x: x.timestamp)
         return canvas_images
@@ -277,30 +263,22 @@ class Event:
         section_dirs = glob.glob(os.path.join(self.reference_section_dir, '*'))
         return {dir.split('/')[-1]: ReferenceSection.load(dir) for dir in section_dirs}
 
-    def analyze(self):
-        pass  # Placeholder method for future implementation
-
     def create_basic_timelapse(self, reference_section_name: str = None,
                                output_path='frames/', start_time: datetime = datetime.utcnow() - timedelta(hours=2),
                                end_time: datetime = datetime.utcnow(), coordinates_from: str = None):
 
-        # Customizing matplotlib parameters
-        plt.rc('font', size=12)  # controls default text sizes
-        plt.rc('axes', titlesize=18)  # fontsize of the axes title
-        plt.rc('axes', labelsize=20)  # fontsize of the x and y labels
-        plt.rc('xtick', labelsize=15)  # fontsize of the tick labels
-        plt.rc('ytick', labelsize=15)  # fontsize of the tick labels
-        plt.rc('legend', fontsize=12)  # legend fontsize
-        plt.rc('figure', titlesize=25)  # fontsize of the figure title
+        plt.rc('font', size=12)
+        plt.rc('axes', titlesize=18)
+        plt.rc('axes', labelsize=20)
+        plt.rc('xtick', labelsize=15)
+        plt.rc('ytick', labelsize=15)
+        plt.rc('legend', fontsize=12)
+        plt.rc('figure', titlesize=25)
 
         timelapse_id = str(uuid.uuid4()).split('-')[0]
         timelapse_dir = os.path.join('canvas_data', self.event_name, 'timelapses', timelapse_id)
         os.makedirs(timelapse_dir, exist_ok=True)
 
-        #frames_to_process = []
-        #for frame in self.canvas_images:
-        #    if start_time < frame.timestamp and end_time > frame.timestamp:
-        #        frames_to_process.append(frame)
         frames_to_process = sorted([canvas_frame for canvas_frame in self.canvas_images if start_time < canvas_frame.timestamp], key=lambda x: x.timestamp)
         num_frames = len(frames_to_process)
 
@@ -468,7 +446,4 @@ class Event:
 
         except subprocess.CalledProcessError:
             print("An error occurred while trying to run the shell script.")
-
-
-
 
