@@ -2,12 +2,12 @@ from canvas_analysis import *
 
 
 if __name__ == "__main__":
-    event = Event("place_2023")
-    start_time = datetime.utcnow() - timedelta(hours=2)
-    end_time = datetime.utcnow()
-    #ref_section = ReferenceSection.download_reference_section('https://brown.ee/LMoP1Zmv.json', 'place_2023')
+    #event = Event("place_2023")
+    #start_time = datetime.utcnow() - timedelta(hours=1)
+    #end_time = datetime.utcnow()
+    ref_section = ReferenceSection.download_reference_sections('https://rentry.co/HITemplate/raw', 'place_2023')
 
-    event.create_basic_timelapse('NG 15x15 + HI 11x11 + 11x6FF + WAR WHAT IS IT GOOD FOR_p2', start_time=start_time, end_time=end_time)
+    #event.create_basic_timelapse('ElSalvador', start_time=start_time, end_time=end_time)
 
 
 

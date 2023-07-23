@@ -44,7 +44,7 @@ class Coordinate:
 
     @staticmethod
     def template_to_image_coordinates(coord: tuple) -> tuple:
-        return coord[0] + 1000, coord[1] + 500
+        return coord[0] + 500, coord[1]
 
     @staticmethod
     def image_to_template_coordinates(coord: tuple) -> tuple:
@@ -52,13 +52,16 @@ class Coordinate:
 
     @staticmethod
     def reddit_to_template_coordinates(coord: tuple) -> tuple:
-        image_coord = Coordinate.reddit_to_image_coordinates(coord)
-        return Coordinate.image_to_template_coordinates(image_coord)
+        image_coord = Coordinate.reddit_to_image_coordinates(*coord)
+        template_coord = Coordinate.image_to_template_coordinates(*image_coord)
+        return template_coord
 
     @staticmethod
     def template_to_reddit_coordinates(coord: tuple) -> tuple:
-        image_coord = Coordinate.template_to_image_coordinates(coord)
-        return Coordinate.image_to_reddit_coordinates(image_coord)
+        image_coord = Coordinate.template_to_image_coordinates(*coord)
+        reddit_coord = Coordinate.image_to_reddit_coordinates(*coord)
+        return reddit_coord
+
 
     def get_image_coordinates(self):
         return self.image_coord
@@ -76,20 +79,35 @@ class Canvas:
     def __init__(self, filename: str, event, load_image: bool = False):
         self.filename = filename
         self.event = event
-        self.image = Image.open(filename) if load_image else None
+        self.image = None
         self.timestamp = self._extract_timestamp_from_filename()
+
+        if load_image:
+            self.load_image()
 
     def _extract_timestamp_from_filename(self):
         timestamp_str = os.path.basename(self.filename).split('.')[0]
         return datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
 
     def load_image(self):
-        if self.image is None:
-            image = Image.open(self.filename)
-            if image.mode != 'RGBA':
-                image = image.convert('RGBA')
+        if isinstance(self.image, type(None)):
+            self.image = Image.open(self.filename)
 
-            self.image = image
+            if self.image.mode != 'RGBA':
+                self.image = self.image.convert('RGBA')
+
+        if np.all(self.image == np.array([255, 255, 255, 255])):
+            print(f"The canvas instance at {self.timestamp} may be missing")
+
+        #print('loading')
+        #print(isinstance(self.image, type(None)))
+        #if isinstance(self.image, type(None)):
+        #    image = Image.open(self.filename)
+        #    if image.mode != 'RGBA':
+        #        image = image.convert('RGBA')
+        #
+        #    self.image = image
+
 
 
     def add_reference_section(self, section_name: str, top_left: Coordinate, width: int, height: int):
@@ -111,7 +129,14 @@ class Section:
 
     def extract_from_canvas(self, canvas: Canvas):
         canvas.load_image()
-        return canvas.image.crop((*self.top_left.get_image_coordinates(), *self.bottom_right))
+
+        extracted_section = canvas.image.crop((*self.top_left.get_image_coordinates(), *self.bottom_right))
+
+        if np.all(extracted_section == np.array([255, 255, 255, 255])):
+            print(f"The reference section {self.top_left} may be missing")
+
+
+        return extracted_section
 
 class ReferenceSection(Section):
     """Represents a reference section on the canvas, containing the 'correct' state of the section."""
@@ -210,8 +235,8 @@ class ReferenceSection(Section):
                 image_response = requests.get(source, stream=True)
                 image_response.raise_for_status()
                 correct_image = Image.open(io.BytesIO(image_response.content))
-                if image.mode != 'RGBA':
-                    image = image.convert('RGBA')
+                if correct_image.mode != 'RGBA':
+                    image = correct_image.convert('RGBA')
                 width, height = correct_image.size
                 if save:  # Save the image file locally
                     image_path = os.path.join('canvas_data', event_name, 'reference_sections', name, f"{name}.png")
@@ -245,7 +270,7 @@ class Event:
             filename = os.path.join(dir, f"{os.path.basename(dir)}.png")
             if os.path.exists(filename):  # Check if the file exists
                 canvas_images.append(Canvas(filename, self))
-        canvas_images.sort(key=lambda x : x.timestamp)
+        canvas_images.sort(key=lambda x: x.timestamp)
         return canvas_images
 
     def _load_reference_sections(self) -> List[ReferenceSection]:
@@ -314,6 +339,8 @@ class Event:
         pixel_change_rate_list = [0]
         net_change_list = [0]
 
+        print(frames_to_process)
+
         with tqdm(total=num_frames, desc="Preprocessing frames",
                   bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}') as pbar:
             for n, canvas_frame in enumerate(frames_to_process):
@@ -326,7 +353,6 @@ class Event:
                     wrong_pixel_list.append(0)
                     previous_state = canvas_state
                     reference_image = reference_section.get_correct_image_as_numpy()
-                    print(reference_image)
                 else:
                     # vs previous state
                     pixel_change_mask = (previous_state != canvas_state)
@@ -360,8 +386,8 @@ class Event:
                   bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}') as pbar:
             for n, canvas_frame in enumerate(frames_to_process):
                 try:
+                    #print(canvas_frame.image)
                     reference_section_state = reference_section.get_correct_image_as_numpy()
-                    canvas_frame.load_image()
                     canvas_state = np.array(reference_section.extract_from_canvas(canvas_frame))
 
                     pixel_change_mask = np.all(reference_section_state == canvas_state, axis=-1)
