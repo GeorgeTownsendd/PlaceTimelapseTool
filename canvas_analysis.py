@@ -85,7 +85,12 @@ class Canvas:
 
     def load_image(self):
         if self.image is None:
-            self.image = Image.open(self.filename)
+            image = Image.open(self.filename)
+            if image.mode != 'RGBA':
+                image = image.convert('RGBA')
+
+            self.image = image
+
 
     def add_reference_section(self, section_name: str, top_left: Coordinate, width: int, height: int):
         reference_section = ReferenceSection.from_canvas(event.event_name, section_name, top_left, width, height, self)
@@ -119,7 +124,10 @@ class ReferenceSection(Section):
         self.path = os.path.join('canvas_data', self.event_name, 'reference_sections', self.name)
 
     def get_correct_image_as_numpy(self) -> np.ndarray:
-        return np.array(self.correct_image)
+        image = self.correct_image
+        if image.mode != 'RGBA':
+            image = image.convert('RGBA')
+        return np.array(image)
 
     @classmethod
     def from_canvas(cls, event_name: str, name: str, top_left: Coordinate, width: int, height: int, canvas: Canvas):
@@ -183,34 +191,42 @@ class ReferenceSection(Section):
         return cls(event_name, section_name, top_left, width, height, correct_image)
 
     @classmethod
-    def download_reference_section(cls, url: str, event_name: str, save: bool = True) -> 'ReferenceSection':
+    def download_reference_sections(cls, url: str, event_name: str, save: bool = True) -> List['ReferenceSection']:
         response = requests.get(url)
         response.raise_for_status()
         metadata = response.json()
-        template_metadata = metadata['templates'][0]
-        name = template_metadata.get('name', '')
-        source = template_metadata['sources'][0] if 'sources' in template_metadata and len(
-            template_metadata['sources']) > 0 else ''
-        x, y = template_metadata['x'], template_metadata['y']
-        top_left = Coordinate(x, y, 'template')
-        print(top_left.image_coord)
-        width, height = template_metadata.get('width', None), template_metadata.get('height', None)
-        correct_image = None
-        if source.startswith('http'):
-            image_response = requests.get(source, stream=True)
-            image_response.raise_for_status()
-            correct_image = Image.open(io.BytesIO(image_response.content))
-            width, height = correct_image.size
-            if save:  # Save the image file locally
-                image_path = os.path.join('canvas_data', event_name, 'reference_sections', name, f"{name}.png")
-                os.makedirs(os.path.dirname(image_path), exist_ok=True)  # Ensure the directories exist
-                correct_image.save(image_path)
-        else:
-            correct_image = Image.open(source)
-        ref_section = cls(event_name, name, top_left, width, height, correct_image)
-        if save:
-            ref_section.save()
-        return ref_section
+
+        ref_sections = []  # To hold all the ReferenceSection instances
+
+        for index, template_metadata in enumerate(metadata['templates'], start=1):  # Added enumeration to get index
+            base_name = template_metadata.get('name', '')
+            name = f"{base_name}_p{index}"  # Disambiguated name
+            source = template_metadata['sources'][0] if 'sources' in template_metadata and len(
+                template_metadata['sources']) > 0 else ''
+            x, y = template_metadata['x'], template_metadata['y']
+            top_left = Coordinate(x, y, 'template')
+            width, height = template_metadata.get('width', None), template_metadata.get('height', None)
+            if source.startswith('http'):
+                image_response = requests.get(source, stream=True)
+                image_response.raise_for_status()
+                correct_image = Image.open(io.BytesIO(image_response.content))
+                if image.mode != 'RGBA':
+                    image = image.convert('RGBA')
+                width, height = correct_image.size
+                if save:  # Save the image file locally
+                    image_path = os.path.join('canvas_data', event_name, 'reference_sections', name, f"{name}.png")
+                    os.makedirs(os.path.dirname(image_path), exist_ok=True)  # Ensure the directories exist
+                    correct_image.save(image_path)
+            else:
+                correct_image = Image.open(source)
+                if image.mode != 'RGBA':
+                    image = image.convert('RGBA')
+            ref_section = cls(event_name, name, top_left, width, height, correct_image)
+            if save:
+                ref_section.save()
+            ref_sections.append(ref_section)
+
+        return ref_sections  # Return the list of ReferenceSection instances
 
 
 class Event:
@@ -229,6 +245,7 @@ class Event:
             filename = os.path.join(dir, f"{os.path.basename(dir)}.png")
             if os.path.exists(filename):  # Check if the file exists
                 canvas_images.append(Canvas(filename, self))
+        canvas_images.sort(key=lambda x : x.timestamp)
         return canvas_images
 
     def _load_reference_sections(self) -> List[ReferenceSection]:
@@ -238,7 +255,7 @@ class Event:
     def analyze(self):
         pass  # Placeholder method for future implementation
 
-    def create_basic_timelapse(self, reference_section_name: str = None, basic_version=False,
+    def create_basic_timelapse(self, reference_section_name: str = None,
                                output_path='frames/', start_time: datetime = datetime.utcnow() - timedelta(hours=2),
                                end_time: datetime = datetime.utcnow(), coordinates_from: str = None):
 
@@ -251,14 +268,15 @@ class Event:
         plt.rc('legend', fontsize=12)  # legend fontsize
         plt.rc('figure', titlesize=25)  # fontsize of the figure title
 
-        # Generate a unique ID for the timelapse
-        timelapse_id = str(uuid.uuid4())
+        timelapse_id = str(uuid.uuid4()).split('-')[0]
         timelapse_dir = os.path.join('canvas_data', self.event_name, 'timelapses', timelapse_id)
         os.makedirs(timelapse_dir, exist_ok=True)
 
-        frames_to_process = sorted([canvas_frame for canvas_frame in self.canvas_images
-                                    if start_time < canvas_frame.timestamp < end_time],
-                                   key=lambda x: x.timestamp)
+        #frames_to_process = []
+        #for frame in self.canvas_images:
+        #    if start_time < frame.timestamp and end_time > frame.timestamp:
+        #        frames_to_process.append(frame)
+        frames_to_process = sorted([canvas_frame for canvas_frame in self.canvas_images if start_time < canvas_frame.timestamp], key=lambda x: x.timestamp)
         num_frames = len(frames_to_process)
 
         if num_frames == 0:
@@ -279,7 +297,7 @@ class Event:
                 frames_to_process[0].add_reference_section(reference_section_name, top_left_image, width, height)
             else:
                 print("Error: Neither a reference section nor a set of coordinates were provided.")
-                return  # No reference section was created, so return without creating a timelapse
+                return
 
         reference_section = self.reference_sections[reference_section_name]
 
@@ -293,8 +311,8 @@ class Event:
         pixel_changes_list = []
         wrong_pixel_list = []
         timestamps_list = []
-        pixel_change_rate_list = [0]  # Initialize the first frame pixel change rate as 0
-        net_change_list = [0]  # Initialize the first frame net change as 0
+        pixel_change_rate_list = [0]
+        net_change_list = [0]
 
         with tqdm(total=num_frames, desc="Preprocessing frames",
                   bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}') as pbar:
@@ -308,6 +326,7 @@ class Event:
                     wrong_pixel_list.append(0)
                     previous_state = canvas_state
                     reference_image = reference_section.get_correct_image_as_numpy()
+                    print(reference_image)
                 else:
                     # vs previous state
                     pixel_change_mask = (previous_state != canvas_state)
@@ -324,11 +343,9 @@ class Event:
                     num_wrong_pixels = wrong_pixel_mask.sum()
                     wrong_pixel_list.append(num_wrong_pixels)
 
-                    # Calculate net change
                     net_change = (wrong_pixel_list[-1] - wrong_pixel_list[-2])
                     net_change_list.append(net_change)
 
-                    # Add the timestamp to the list
                     timestamps_list.append(canvas_frame.timestamp)
                     pbar.update()
 
@@ -347,49 +364,31 @@ class Event:
                     canvas_frame.load_image()
                     canvas_state = np.array(reference_section.extract_from_canvas(canvas_frame))
 
-                    #pixel_change_mask = reference_section_state == canvas_state
-                    #pixel_changes = np.zeros(reference_section_state.shape)
-                    #pixel_changes[pixel_change_mask] = 1
-                    #pixel_changes = reference_section_state.copy()
-                    #pixel_changes[pixel_change_mask] = 1
-
-                    # Create a 3D mask where pixels are identical
                     pixel_change_mask = np.all(reference_section_state == canvas_state, axis=-1)
-
-                    # Start by copying the current canvas state
                     pixel_changes = canvas_state.copy()
-
-                    # Assign black color to pixels that are identical
-                    pixel_changes[pixel_change_mask] = 0  # Black for RGBA images
+                    pixel_changes[pixel_change_mask] = 0
 
                     fig = plt.figure(figsize=(12, 12))
+                    gs = GridSpec(4, 3, figure=fig)
 
-                    gs = GridSpec(4, 3, figure=fig)  # Changed GridSpec to a 6x3 grid
+                    ax1 = fig.add_subplot(gs[slice(0, 2), 0])
+                    ax2 = fig.add_subplot(gs[slice(0, 2), 1])
+                    ax3 = fig.add_subplot(gs[slice(0, 2), 2])
 
-                    if basic_version:
-                        ax1 = fig.add_subplot(gs[0, 0])
-                        ax2 = fig.add_subplot(gs[0, 1])
-                        ax3 = fig.add_subplot(gs[0, 2])
-                    else:
-                        ax1 = fig.add_subplot(gs[slice(0, 2), 0])
-                        ax2 = fig.add_subplot(gs[slice(0, 2), 1])
-                        ax3 = fig.add_subplot(gs[slice(0, 2), 2])
+                    ax4 = fig.add_subplot(gs[2, :])
+                    ax5 = fig.add_subplot(gs[3, :])
 
-                        ax4 = fig.add_subplot(gs[2, :])  # Middle row, one plot
-                        ax5 = fig.add_subplot(gs[3, :])  # Bottom row, one plot
+                    ax4.title.set_text('Pixel Change Rate (vs previous frame) per Second')
+                    ax5.title.set_text('Pixel Errors (vs Reference Image)')
 
-                        ax4.title.set_text('Pixel Change Rate (vs previous frame) per Second')
-                        ax5.title.set_text('Pixel Errors (vs Reference Image)')
+                    # Plot the number of pixel changes over time
+                    ax4.plot(timestamps_list[:n + 1], pixel_change_rate_list[:n + 1], color='blue', lw=5)
+                    ax5.plot(timestamps_list[:n + 1], wrong_pixel_list[:n + 1], color='blue', lw=5)
 
-                        # Plot the number of pixel changes over time
-                        ax4.plot(timestamps_list[:n + 1], pixel_change_rate_list[:n + 1], color='blue', lw=5)
-                        ax5.plot(timestamps_list[:n + 1], wrong_pixel_list[:n + 1], color='blue', lw=5)
-
-                        # Set the x and y axis limits
-                        ax4.set_xlim([start_time, end_time])
-                        ax5.set_xlim([start_time, end_time])
-                        ax4.set_ylim([0, max_pixel_change_rate])
-                        ax5.set_ylim([0, max_wrong_pixel_changes])
+                    ax4.set_xlim([start_time, end_time])
+                    ax5.set_xlim([start_time, end_time])
+                    ax4.set_ylim([0, max_pixel_change_rate])
+                    ax5.set_ylim([0, max_wrong_pixel_changes])
 
                     ax1.imshow(reference_section_state)
                     ax1.title.set_text('Reference Image')
@@ -401,14 +400,12 @@ class Event:
                     ax3.title.set_text('Diff')
                     plt.tight_layout()
 
-                    # Apply the date formatter to the x-axis
                     ax4.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d %H:%M'))
                     ax5.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d %H:%M'))
 
                     ax4.xaxis.set_major_locator(mdates.MinuteLocator(byminute=[0, 10, 20, 30, 40, 50]))
                     ax5.xaxis.set_major_locator(mdates.MinuteLocator(byminute=[0, 10, 20, 30, 40, 50]))
 
-                    # Rotate the date labels for better visibility
                     plt.gcf().autofmt_xdate()
                     plt.tight_layout()
                     plt.savefig(os.path.join(output_path, f'frame{n}.jpg'))
@@ -435,7 +432,6 @@ class Event:
                 os.path.join(self.reference_section_dir, reference_section_name, f"{reference_section_name}.json"),
                 timelapse_dir)
 
-            # Create the metadata JSON
             metadata = {
                 "start_time": start_time.isoformat(),
                 "end_time": end_time.isoformat(),
@@ -449,37 +445,4 @@ class Event:
 
 
 
-if __name__ == "__main__":
-    #event = Event("place_2023")
-    #start_time = datetime.utcnow() - timedelta(hours=1)
-    #end_time = datetime.utcnow()
-    #ref_section = ReferenceSection.download_reference_section('https://brown.ee/LMoP1Zmv.json', 'place_2023')
-    #event.create_basic_timelapse(ref_section.name, start_time, end_time)
 
-    refname = 'StreamerFlag'
-    event = Event("place_2023")
-    #top_left = Coordinate(-879, 178, 'reddit')
-    #event.canvas_images[-1].add_reference_section(refname, top_left, 125, 50)
-
-    #start_time = datetime.utcnow() - timedelta(hours=17.75)
-    #end_time = datetime.utcnow() - timedelta(hours=16)
-
-    start_time = datetime.utcnow() - timedelta(hours=1)
-    end_time = datetime.utcnow()# - timedelta(hours=16)
-
-    event.create_basic_timelapse(coordinates_from=refname, start_time=start_time, end_time=end_time)
-    #top_left_reddit = (-500, 178)
-    #top_left_reddit = (215, 125)
-    #top_left = Coordinate(215, 115, 'reddit')#reddit_to_image_coordinates(top_left_reddit)
-
-    #ref_section = ReferenceSection.download_reference_section('https://brown.ee/LMoP1Zmv.json', 'place_2023')
-
-    # Use last one hour time frame
-    #end_time = datetime.utcnow()
-    #start_time = end_time - timedelta(hours=1.5)
-
-    #generate_heatmap(event, 'event.reference_sections['AmongUs']', start_time, end_time)
-
-
-    #create_basic_timelapse(event, event.reference_sections['NormalHair'])
-    #canvas = event.canvas_images[1900]
