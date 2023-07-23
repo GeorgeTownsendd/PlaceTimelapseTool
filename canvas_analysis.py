@@ -276,7 +276,7 @@ class Event:
                 top_left_image = pre_existing_section.top_left
                 width = pre_existing_section.width
                 height = pre_existing_section.height
-                frames_to_process[-1].add_reference_section(reference_section_name, top_left_image, width, height)
+                frames_to_process[0].add_reference_section(reference_section_name, top_left_image, width, height)
             else:
                 print("Error: Neither a reference section nor a set of coordinates were provided.")
                 return  # No reference section was created, so return without creating a timelapse
@@ -347,9 +347,20 @@ class Event:
                     canvas_frame.load_image()
                     canvas_state = np.array(reference_section.extract_from_canvas(canvas_frame))
 
-                    pixel_change_mask = (reference_section_state == canvas_state)
-                    pixel_changes = np.zeros(reference_section_state.shape)
-                    pixel_changes[pixel_change_mask] = 1
+                    #pixel_change_mask = reference_section_state == canvas_state
+                    #pixel_changes = np.zeros(reference_section_state.shape)
+                    #pixel_changes[pixel_change_mask] = 1
+                    #pixel_changes = reference_section_state.copy()
+                    #pixel_changes[pixel_change_mask] = 1
+
+                    # Create a 3D mask where pixels are identical
+                    pixel_change_mask = np.all(reference_section_state == canvas_state, axis=-1)
+
+                    # Start by copying the current canvas state
+                    pixel_changes = canvas_state.copy()
+
+                    # Assign black color to pixels that are identical
+                    pixel_changes[pixel_change_mask] = 0  # Black for RGBA images
 
                     fig = plt.figure(figsize=(12, 12))
 
@@ -386,7 +397,7 @@ class Event:
                     ax2.imshow(canvas_state)
                     ax2.title.set_text(f'{canvas_frame.timestamp} UTC')
 
-                    ax3.imshow(pixel_changes, cmap='gray')
+                    ax3.imshow(pixel_changes)
                     ax3.title.set_text('Diff')
                     plt.tight_layout()
 
@@ -445,10 +456,18 @@ if __name__ == "__main__":
     #ref_section = ReferenceSection.download_reference_section('https://brown.ee/LMoP1Zmv.json', 'place_2023')
     #event.create_basic_timelapse(ref_section.name, start_time, end_time)
 
+    refname = 'HIExpansion'
     event = Event("place_2023")
-    top_left = Coordinate(-882, 132, 'reddit')
-    event.canvas_images[-1].add_reference_section('test', top_left, 50, 50)
+    #top_left = Coordinate(-868, 155, 'reddit')
+    #event.canvas_images[-1].add_reference_section(refname, top_left, 125, 125)
 
+    start_time = datetime.utcnow() - timedelta(hours=17.75)
+    end_time = datetime.utcnow() - timedelta(hours=16)
+
+    #start_time = datetime.utcnow() - timedelta(hours=1)
+    #end_time = datetime.utcnow()# - timedelta(hours=16)
+
+    event.create_basic_timelapse(coordinates_from=refname, start_time=start_time, end_time=end_time)
     #top_left_reddit = (-500, 178)
     #top_left_reddit = (215, 125)
     #top_left = Coordinate(215, 115, 'reddit')#reddit_to_image_coordinates(top_left_reddit)
@@ -461,7 +480,6 @@ if __name__ == "__main__":
 
     #generate_heatmap(event, 'event.reference_sections['AmongUs']', start_time, end_time)
 
-   # event.create_basic_timelapse(reference_section_name='HI 13x13 + Audery', start_time=datetime.utcnow() - timedelta(hours=12), end_time=datetime.utcnow()-timedelta(hours=11.75))
 
     #create_basic_timelapse(event, event.reference_sections['NormalHair'])
     #canvas = event.canvas_images[1900]
