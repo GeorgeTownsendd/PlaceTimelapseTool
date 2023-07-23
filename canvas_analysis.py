@@ -90,6 +90,7 @@ class Canvas:
     def add_reference_section(self, section_name: str, top_left: Coordinate, width: int, height: int):
         reference_section = ReferenceSection.from_canvas(event.event_name, section_name, top_left, width, height, self)
         section_dir = os.path.join(self.event.reference_section_dir, section_name)
+        print(section_dir)
         os.makedirs(section_dir, exist_ok=True)
         reference_section.save()
         self.event.reference_sections[section_name] = reference_section
@@ -125,6 +126,7 @@ class ReferenceSection(Section):
         canvas.load_image()
         bottom_right = Coordinate(top_left.get_image_coordinates()[0] + width, top_left.get_image_coordinates()[1] + height, 'image')
         section = cls(event_name, name, top_left, width, height, canvas.image.crop((*top_left.get_image_coordinates(), *bottom_right.get_image_coordinates())))
+
         return section
 
     def save(self):
@@ -145,6 +147,10 @@ class ReferenceSection(Section):
                 'whitelist': [],
                 'blacklist': []
             }, f)
+        # Ensure directory exists before saving image
+        os.makedirs(self.path, exist_ok=True)
+        # Save the image in PNG format
+        self.correct_image.save(os.path.join(self.path, f"{self.name}.png"))
 
     @classmethod
     def load(cls, path: str) -> 'ReferenceSection':
@@ -433,16 +439,19 @@ class Event:
 
 
 if __name__ == "__main__":
+    #event = Event("place_2023")
+    #start_time = datetime.utcnow() - timedelta(hours=1)
+    #end_time = datetime.utcnow()
+    #ref_section = ReferenceSection.download_reference_section('https://brown.ee/LMoP1Zmv.json', 'place_2023')
+    #event.create_basic_timelapse(ref_section.name, start_time, end_time)
+
     event = Event("place_2023")
-    start_time = datetime.utcnow() - timedelta(hours=1)
-    end_time = datetime.utcnow()
-    ref_section = ReferenceSection.download_reference_section('https://brown.ee/LMoP1Zmv.json', 'place_2023')
-    event.create_basic_timelapse(ref_section.name, start_time, end_time)
+    top_left = Coordinate(-882, 132, 'reddit')
+    event.canvas_images[-1].add_reference_section('test', top_left, 50, 50)
 
     #top_left_reddit = (-500, 178)
     #top_left_reddit = (215, 125)
     #top_left = Coordinate(215, 115, 'reddit')#reddit_to_image_coordinates(top_left_reddit)
-    #event = Event("place_2023")
 
     #ref_section = ReferenceSection.download_reference_section('https://brown.ee/LMoP1Zmv.json', 'place_2023')
 
@@ -452,8 +461,7 @@ if __name__ == "__main__":
 
     #generate_heatmap(event, 'event.reference_sections['AmongUs']', start_time, end_time)
 
-    event.create_basic_timelapse(reference_section_name='HI 13x13 + Audery', start_time=datetime.utcnow() - timedelta(hours=12), end_time=datetime.utcnow()-timedelta(hours=11.75))
+   # event.create_basic_timelapse(reference_section_name='HI 13x13 + Audery', start_time=datetime.utcnow() - timedelta(hours=12), end_time=datetime.utcnow()-timedelta(hours=11.75))
 
     #create_basic_timelapse(event, event.reference_sections['NormalHair'])
     #canvas = event.canvas_images[1900]
-    #event.canvas_images[-1000].add_reference_section('test', top_left, 50, 50)
