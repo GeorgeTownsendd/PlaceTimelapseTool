@@ -1,6 +1,10 @@
 # PlaceTimelapseTool
 
-PlaceTimelapseTool is an advanced utility designed to record and analyze the evolution of a Reddit collaborative canvas over time. It utilizes Reddit's API to capture the real-time changes on the canvas, storing the snapshots as a sequence of images. Additionally, it offers functionality for producing time-lapse videos and analyzing specific reference sections.
+PlaceTimelapseTool is an utility designed to record and analyze the evolution of a Reddit collaborative canvas over time. It utilizes Reddit's API to capture the real-time changes on the canvas, storing the snapshots as a sequence of images. It offers functionality for producing time-lapse videos and for defining reference sections. 
+
+# Example
+
+![](https://github.com/GeorgeTownsendd/PlaceTimelapseTool/blob/master/examples/example.gif)
 
 ## Directory Structure
 

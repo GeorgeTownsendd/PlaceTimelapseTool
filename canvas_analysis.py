@@ -417,6 +417,9 @@ class Event:
                     plt.close('all')
                     pbar.update()
 
+                    del(canvas_state)
+                    canvas_frame.image = None
+
                 except FileNotFoundError:
                     print(f"File not found for timestamp: {canvas_frame.timestamp}")
                 except Exception as e:
